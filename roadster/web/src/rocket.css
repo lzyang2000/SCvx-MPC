@@ -1,0 +1,53 @@
+.rocket-note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 18px 0 0;
+}
+.setup-group select {
+  margin-top: 10px;
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+.rocket-inspector .mpc-title h2 {
+  font-size: 16px;
+}
+.rocket-inspector .mpc-plot svg {
+  height: 160px;
+}
+.phase-jumps {
+  margin: 12px 0 0;
+}
+.mpc-actions {
+  flex-wrap: wrap;
+}
+.viewport {
+  background: #0c1118;
+}
+.telemetry-panel .metric {
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+.metric b {
+  font-variant-numeric: tabular-nums;
+}
+#outcome {
+  max-width: 310px;
+}
+footer a {
+  color: inherit;
+  font-size: 11px;
+}
+footer div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto;
+  }
+}

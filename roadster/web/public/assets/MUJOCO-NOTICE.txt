@@ -1,0 +1,5 @@
+MuJoCo JavaScript/WASM runtime: @mujoco/mujoco 3.16.0
+https://github.com/google-deepmind/mujoco
+Copyright Google DeepMind and the MuJoCo authors. Apache License 2.0.
+The build copies the unmodified single-thread npm runtime to vendor/mujoco/.
+The accompanying Apache 2.0 license is MUJOCO-LICENSE.

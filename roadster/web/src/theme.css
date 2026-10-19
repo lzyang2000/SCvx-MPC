@@ -1,0 +1,23 @@
+/* Shared mission-control palette for every page. */
+:root {
+  color-scheme: dark;
+  --bg: #05070a;
+  --surface: #0c1118;
+  --raised: #151e29;
+  --line: #2a3442;
+  --text: #f5f7fa;
+  --muted: #a7b3c4;
+  --accent: #4da3ff;
+  --delivered: #d4dce7;
+  --danger: #ff7b86;
+  color: var(--text);
+  background: var(--bg);
+}
+::selection {
+  background: #4da3ff44;
+  color: #fff;
+}
+select option {
+  background: var(--surface);
+  color: var(--text);
+}

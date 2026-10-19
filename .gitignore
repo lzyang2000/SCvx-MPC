@@ -1,0 +1,10 @@
+.DS_Store
+.pytest_cache/
+.venv/
+__pycache__/
+*.py[cod]
+tmp/
+node_modules/
+roadster/web/dist/
+roadster/output/
+async_final_approach_log.csv

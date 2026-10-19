@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#05070a" />
+    <title>Roadster · SCvx MPC Demos</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script src="./src/demo-layout.js"></script>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three/three.module.js",
+          "three/addons/": "./vendor/three/addons/"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="./src/language.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="./" target="_top" aria-label="SCvx MPC Demos home"
+        ><img
+          class="mark"
+          src="./assets/scvx-mark.svg"
+          alt=""
+          width="32"
+          height="32"
+        />
+        SCvx MPC DEMOS<span class="divider"></span
+        ><span class="brand-sub">CAR</span></a
+      >
+      <div class="header-right">
+        <span class="live-dot"></span> BROWSER PHYSICS
+        <span class="version">SIM / 001</span
+        ><button
+          id="about"
+          class="icon-button"
+          title="Model assumptions and sources"
+          aria-label="Model assumptions and sources"
+        >
+          ⓘ
+        </button>
+      </div>
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <div class="eyebrow">TESLA ROADSTER · COLD-GAS FLIGHT STUDY</div>
+          <h1 id="car-heading">Roadster ramp recovery</h1>
+          <p id="car-description">
+            Drive up the ramp, launch upside down and roll upright. Land back at
+            the starting marker, facing the approach.
+          </p>
+        </div>
+        <div class="heading-note">
+          <span class="small-cross">+</span> RIGID-BODY SIMULATION<br /><span
+            >Concept geometry · Assumed hardware</span
+          >
+        </div>
+      </div>
+      <div class="workspace">
+        <aside class="setup-panel">
+          <div class="panel-title">
+            <span>01 / FLIGHT SETUP</span><span class="tag">SI UNITS</span>
+          </div>
+          <div class="car-spec">
+            <span class="car-icon">⌁</span>
+            <div>
+              <h2>Roadster concept</h2>
+              <p>Original model based on reference images</p>
+            </div>
+          </div>
+          <div
+            class="setup-group maneuver-control"
+            role="group"
+            aria-label="Car maneuver"
+          >
+            <h3>Maneuver</h3>
+            <button id="maneuver-ramp" aria-pressed="true">
+              C-ramp recovery
+            </button>
+            <button id="maneuver-barrel" aria-pressed="false">
+              360° barrel roll
+            </button>
+          </div>
+          <div class="setup-group">
+            <h3>Launch conditions</h3>
+            <label for="speed"
+              ><span id="speed-label">Ramp speed</span>
+              <output id="speed-out">12 m/s</output></label
+            ><input
+              id="speed"
+              type="range"
+              min="9"
+              max="16"
+              step=".5"
+              value="12"
+            />
+            <div class="range-ends"><span>9 M/S</span><span>16 M/S</span></div>
+            <div id="radius-control">
+              <label for="radius"
+                >Ramp radius <output id="radius-out">10 m</output></label
+              ><input
+                id="radius"
+                type="range"
+                min="8"
+                max="16"
+                step="1"
+                value="10"
+              />
+              <div class="range-ends"><span>8 M</span><span>16 M</span></div>
+            </div>
+            <label for="gas"
+              >Stored air <output id="gas-out">250 kg</output></label
+            ><input
+              id="gas"
+              type="range"
+              min="0"
+              max="250"
+              step="10"
+              value="250"
+            />
+            <div class="range-ends"><span>0 KG</span><span>250 KG</span></div>
+          </div>
+          <div class="setup-group goal-controls">
+            <h3>Flight planning</h3>
+            <label for="landing-x"
+              >Landing position <output id="landing-x-out">-20 m</output></label
+            >
+            <input
+              id="landing-x"
+              type="number"
+              min="-28"
+              max="-12"
+              step="0.1"
+              value="-20"
+            />
+            <p class="landing-hint">
+              Click the blue ground strip to set the landing point along the
+              runway. Drag to move the camera.
+            </p>
+            <label class="planner-option"
+              ><input id="goal-planning" type="checkbox" checked /> Plan whole
+              flight from target</label
+            >
+            <label class="planner-option" id="require-roll-control" hidden
+              ><input id="require-roll" type="checkbox" checked /> Require a
+              360° barrel roll</label
+            >
+            <p id="planner-status" role="status">
+              Choose a target, then compute a new flight.
+            </p>
+          </div>
+          <div class="setup-group propulsion">
+            <h3>Propulsion model</h3>
+            <div>
+              <span id="launch-spec-label">Ramp exit</span
+              ><b id="launch-spec-value">180° / inverted</b>
+            </div>
+            <div><span>Nozzles</span><b>4 bottom + 2 front side</b></div>
+            <div><span>Thrust / nozzle</span><b>8.5 kN</b></div>
+            <div><span>Exhaust speed</span><b>650 m/s</b></div>
+            <div id="fan-spec"><span>Fan suction limit</span><b>2 g</b></div>
+          </div>
+          <label class="switch-label" for="mpc"
+            ><span
+              >Predictive control<span class="sub-label"
+                >Airborne recovery and landing</span
+              ></span
+            ><input id="mpc" type="checkbox" checked /><span
+              class="switch"
+              aria-hidden="true"
+            ></span
+          ></label>
+          <button id="live" class="primary-button live-button">
+            Run live <span>●</span>
+          </button>
+          <button id="compute" class="primary-button">
+            Compute flight <span>↗</span>
+          </button>
+          <div id="compute-status" role="status" class="compute-status">
+            Recorded run ready
+          </div>
+        </aside>
+        <section
+          class="viewport"
+          aria-label="Interactive Three.js flight simulation"
+        >
+          <div id="scene"></div>
+          <div class="scene-top">
+            <div class="scene-label">
+              <span class="live-dot"></span>
+              <span id="phase-label">PRE-LAUNCH</span
+              ><span class="scene-sub" id="controller-label">WHEEL DRIVE</span>
+            </div>
+            <span id="load-status">LOADING VEHICLE…</span>
+          </div>
+          <div class="view-switch" aria-label="Camera view">
+            <button data-view="overview" class="selected">Overview</button
+            ><button data-view="follow">Follow</button
+            ><button data-view="side">Side</button
+            ><button data-view="mpc">MPC close-up</button>
+          </div>
+          <div class="alt-ruler">
+            <span>30 M ─</span><span>20 M ─</span><span>10 M ─</span
+            ><span>00 M ─</span>
+          </div>
+          <div class="scene-bottom">
+            <span
+              ><span class="axis-color">↗</span> Z UP / EARTH 9.81 M/S²</span
+            ><span>DRAG TO ORBIT · SCROLL TO ZOOM</span>
+          </div>
+          <div class="view-options">
+            <label
+              ><input id="trail" type="checkbox" checked /> Flight path</label
+            ><label
+              ><input id="jets" type="checkbox" checked /> Thruster
+              plumes</label
+            ><label
+              ><input id="prediction" type="checkbox" checked /> MPC
+              prediction</label
+            >
+          </div>
+          <div id="outcome" class="outcome" hidden></div>
+        </section>
+        <aside class="telemetry-panel">
+          <div class="panel-title">
+            <span>02 / TELEMETRY</span><span class="live-dot"></span>
+          </div>
+          <div class="metric primary-metric">
+            <span>ALTITUDE / COM</span>
+            <div><b id="altitude">0.62</b><small>m</small></div>
+            <svg
+              id="alt-chart"
+              viewBox="0 0 200 48"
+              aria-label="Altitude over the flight"
+            >
+              <path
+                id="alt-path"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+              />
+              <line
+                id="chart-cursor"
+                y1="0"
+                y2="48"
+                stroke="#d4dce7"
+                stroke-width="1"
+              />
+            </svg>
+          </div>
+          <div class="metric">
+            <span>VELOCITY</span>
+            <div><b id="velocity">0.00</b><small>m/s</small></div>
+          </div>
+          <div class="metric">
+            <span>TOTAL BODY ROLL</span>
+            <div><b id="roll-value">0.0</b><small>deg</small></div>
+          </div>
+          <div class="metric">
+            <span>AIR REMAINING</span>
+            <div><b id="air-value">250</b><small>kg</small></div>
+            <div class="gas-bar"><i id="gas-fill"></i></div>
+          </div>
+          <div class="nozzle-panel">
+            <span>NOZZLE ACTIVITY</span>
+            <div class="nozzle-car">
+              <div class="nozzle-silhouette"></div>
+              <div id="nozzle-grid"></div>
+            </div>
+            <div class="legend"><i></i> ACTIVE <span>0–8.5 kN / jet</span></div>
+          </div>
+          <div class="contact-info">
+            <span id="contact-value">● WHEEL CONTACT</span
+            ><span id="fan-value">FAN 0.00 g</span>
+          </div>
+          <button id="export" class="text-button">
+            Export simulation data <span>↓</span>
+          </button>
+        </aside>
+      </div>
+      <section class="playback">
+        <button id="play" aria-label="Play simulation" class="play-button">
+          ▶</button
+        ><button
+          id="restart"
+          class="restart-button"
+          title="Restart flight"
+          aria-label="Restart flight"
+        >
+          ↺
+        </button>
+        <div class="time-readout">
+          <b id="time">00.00</b><span id="duration">/ 00.00 s</span>
+        </div>
+        <div class="timeline-wrap">
+          <input
+            type="range"
+            id="timeline"
+            min="0"
+            max="12"
+            value="0"
+            step=".01"
+            aria-label="Simulation time"
+          />
+          <div class="phase-ticks" id="phase-ticks"></div>
+        </div>
+        <select id="rate" aria-label="Playback speed">
+          <option value=".25">0.25×</option>
+          <option value=".5">0.5×</option>
+          <option value="1" selected>1× speed</option>
+          <option value="2">2×</option>
+        </select>
+      </section>
+      <section class="sound-controls" aria-label="Sound settings">
+        <button id="sound-toggle" type="button" aria-pressed="true">
+          Sound on
+        </button>
+        <label><input id="sound-music" type="checkbox" checked /> Music</label>
+        <label for="sound-volume">Volume</label>
+        <input
+          id="sound-volume"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.3"
+          aria-label="Sound volume"
+        />
+      </section>
+      <section class="mpc-inspector" aria-label="MPC inspector">
+        <div class="mpc-inspector-status">
+          <div class="panel-title">
+            <span>03 / MPC INSPECTOR</span
+            ><span id="transport-badge" class="transport-badge">REPLAY</span>
+          </div>
+          <div class="mpc-title">
+            <span id="mpc-dot" class="live-dot"></span>
+            <h2 id="mpc-state">Waiting for first plan</h2>
+          </div>
+          <p id="mpc-explanation">
+            The wheels drive the ramp, and fan suction keeps the tires in
+            contact. MPC controls six jets from ramp exit to landing.
+          </p>
+          <div class="mpc-actions">
+            <button id="inspect-mpc" class="outline-button">
+              Inspect flight ↗</button
+            ><button id="next-solve" class="outline-button">
+              Next solve →
+            </button>
+          </div>
+        </div>
+        <div class="mpc-plot">
+          <div class="panel-title">
+            <span>MPC PATH / SIDE VIEW</span><span>METERS</span>
+          </div>
+          <svg
+            id="mpc-chart"
+            viewBox="0 0 320 140"
+            role="img"
+            aria-label="MPC predicted versus actual path; horizontal X position and vertical Z height in meters, axes scale independently"
+          >
+            <path d="M48 18V108H302" fill="none" stroke="#2a3442" />
+            <g class="plot-axis-labels">
+              <text x="8" y="14">Z (m)</text>
+              <text x="175" y="137" text-anchor="middle">X position (m)</text>
+              <text id="mpc-x-min" x="48" y="122" text-anchor="middle">—</text>
+              <text id="mpc-x-mid" x="175" y="122" text-anchor="middle">—</text>
+              <text id="mpc-x-max" x="302" y="122" text-anchor="end">—</text>
+              <text id="mpc-z-min" x="43" y="110" text-anchor="end">—</text>
+              <text id="mpc-z-max" x="43" y="22" text-anchor="end">—</text>
+            </g>
+            <path
+              id="mpc-plot-predicted"
+              fill="none"
+              stroke="#4da3ff"
+              stroke-width="2"
+              stroke-dasharray="5 3"
+            />
+            <path
+              id="mpc-plot-actual"
+              fill="none"
+              stroke="#d4dce7"
+              stroke-width="2"
+            />
+            <circle
+              id="mpc-plot-now"
+              r="3.5"
+              fill="#d4dce7"
+              visibility="hidden"
+            />
+          </svg>
+          <div class="mpc-legend">
+            <span class="planned">● Predicted path</span
+            ><span class="delivered">● Actual path</span
+            ><span class="rejected">● Rejected candidate</span>
+          </div>
+          <p class="mpc-plot-note">
+            The dot marks the current position. Each axis scales independently.
+          </p>
+        </div>
+        <div class="mpc-diagnostics">
+          <dl>
+            <div>
+              <dt>SOLVE</dt>
+              <dd id="mpc-solve">—</dd>
+            </div>
+            <div>
+              <dt>HORIZON</dt>
+              <dd id="mpc-horizon">10 × 0.12 s</dd>
+            </div>
+            <div>
+              <dt>LATENCY</dt>
+              <dd id="mpc-latency">—</dd>
+            </div>
+            <div>
+              <dt>PLAN AGE</dt>
+              <dd id="mpc-age">—</dd>
+            </div>
+            <div>
+              <dt>REQUEST / DELIVERED</dt>
+              <dd id="mpc-force">—</dd>
+            </div>
+            <div>
+              <dt>SCALED DEFECT</dt>
+              <dd id="mpc-defect">—</dd>
+            </div>
+          </dl>
+          <p id="mpc-solver-status">Airborne flight predictions</p>
+        </div>
+      </section>
+      <footer>
+        <span
+          ><span class="footer-symbol">◈</span> 8 FIXED JETS · BROWSER WASM
+          SOLVER</span
+        >
+        <div>
+          <span id="solver-summary">SCvx / Clarabel</span
+          ><a href="./formulation.html" target="_top">SCvx formulation ↗</a
+          ><button id="source-link">Model notes & sources ↗</button>
+        </div>
+      </footer>
+    </main>
+    <dialog id="notes">
+      <button id="close-notes" class="close-button" aria-label="Close notes">
+        ×
+      </button>
+      <div class="eyebrow">MODEL NOTES</div>
+      <h2>What this simulation assumes</h2>
+      <p>
+        The car is an original glTF model based on reference images. Its
+        dimensions and hardware performance are estimates. The simulation cannot
+        establish what a production Tesla could do.
+      </p>
+      <h3>Six fixed jets</h3>
+      <p>
+        The layout has four bottom jets and two front side jets. The side
+        nozzles sit at the front body corners, clear of the wheels. Bottom jets
+        push along the car's upward axis. Side jets push inward from either
+        side. There are no roof jets or jets pointing along the car's length.
+        The car must tilt to accelerate or brake along its heading.
+      </p>
+      <p>
+        The assumed dry mass is 1,428 kg, with up to 250 kg of air. Principal
+        inertias are [800, 2,600, 2,900] kg·m² at full mass. Each nozzle
+        produces up to 8.5 kN at a fixed exhaust speed of 650 m/s. Air use
+        equals total thrust divided by exhaust speed. The model omits tank
+        pressure, cooling, valve delays and recharge.
+      </p>
+      <h3>How MPC controls the run</h3>
+      <p>
+        The wheels drive the approach and ramp. Fan suction keeps the tires in
+        contact. At ramp exit, a browser version of the repository's SCvx and
+        RK4 controller plans the car's motion and orientation by choosing all
+        six nozzle forces. It checks each plan against nonlinear dynamics,
+        applies the first command, then replans from the next measured state.
+      </p>
+      <p>
+        C-ramp recovery turns the inverted car upright. In the jump scene,
+        choose a landing position and whether to require a 360° barrel roll.
+        Both maneuvers use the same air supply and wheel contacts.
+      </p>
+      <p>
+        Whole-flight planning optimizes the airborne trajectory from the takeoff
+        state to the selected landing target. Guidance supplies an initial guess
+        and duration; terminal goals, roll gates and clearance constraints shape
+        the optimized path. A nonlinear rollout validates it before the
+        short-horizon MPC tracks it. Amber shows the complete plan and blue
+        shows the current MPC prediction. The duration and contact sequence
+        remain fixed. Planning or MPC rejection stops the run. Jets shut off at
+        physical wheel contact.
+      </p>
+      <h3>The parked vehicles</h3>
+      <p>
+        The jump scene includes simplified models of a Model 3, Model Y, Semi,
+        Cybertruck and Cybercab. Their dimensions and spacing are approximate.
+        Fixed MuJoCo collision boxes represent the parked vehicles. Clearance is
+        also checked along the planned path. The model does not simulate crash
+        deformation.
+      </p>
+      <h3>Contact and motion</h3>
+      <p>
+        MuJoCo simulates the chassis, four rotating wheels, ramp contact, flight
+        and landing at 0.002 s steps. Wheel torques and fan suction drive the
+        ramp. Each jet applies force at its mounting point. Tire friction brakes
+        the car after landing, and body or display-vehicle contact stops the
+        run.
+      </p>
+      <p>
+        The analytical RK4 model predicts flight for MPC; MuJoCo advances the
+        actual car. The predictor includes wheel spin angular momentum but omits
+        tire contacts. Mass, inertia, nozzle geometry and aerodynamic
+        assumptions remain known. Tires use ellipsoid collision shapes and
+        compliant contacts, with rigid axles and no suspension travel. Tank
+        pressure dynamics, sensor noise and structural failure are omitted.
+      </p>
+      <h3>Reading the display</h3>
+      <p>
+        Run live computes physics and new SCvx plans in a browser worker using
+        Clarabel WASM. A 500 ms sample queue smooths playback while the solver
+        works. The inspector shows how long each solve takes. Compute flight
+        runs as fast as the worker allows and records the result for playback.
+        The dashed blue line shows the prediction; silver shows the path flown.
+        The dot marks the current position, and red marks a rejected plan. The
+        inspector compares requested and delivered thrust. It waits during the
+        approach and ramp, when the wheels control motion. Export saves the
+        states and solver diagnostics.
+      </p>
+      <h3>Sources</h3>
+      <p>
+        The car performs an inverted ramp exit and a full barrel roll over the
+        display vehicles. Six jets provide lift and attitude control, fed by a
+        shared 250 kg gas budget.
+      </p>
+      <ul>
+        <li>
+          <a
+            href="https://www.ft.com/content/a43a24b7-2127-400e-8b75-fe970931df51"
+            target="_blank"
+            rel="noreferrer"
+            >Financial Times: Roadster reveal and barrel roll, October 16,
+            2026</a
+          >
+        </li>
+        <li>
+          <a
+            href="https://www.caranddriver.com/news/a74165059/tesla-roadster-thrusters-fan-system-explained/"
+            target="_blank"
+            rel="noreferrer"
+            >Car and Driver: thrusters and fan system, October 17, 2026</a
+          >
+        </li>
+        <li>
+          <a
+            href="https://www.tesla.com/roadster"
+            target="_blank"
+            rel="noreferrer"
+            >Tesla Roadster</a
+          >
+        </li>
+        <li>
+          <a
+            href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/"
+            target="_blank"
+            rel="noreferrer"
+            >NASA Glenn: specific impulse and mass flow</a
+          >
+        </li>
+      </ul>
+    </dialog>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

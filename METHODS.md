@@ -1,0 +1,688 @@
+# Methods: 6-DOF plant, successive-convexification MPC, and paper mapping
+
+This project draws from two main references:
+
+> B. Açıkmeşe, J. M. Carson III, and L. Blackmore, “Lossless Convexification of Nonconvex Control Bound and Pointing Constraints of the Soft Landing Optimal Control Problem,” *IEEE Transactions on Control Systems Technology*, 21(6), 2013.
+
+> M. Szmuk, T. P. Reynolds, and B. Açıkmeşe, “Successive Convexification for Real-Time 6-DoF Powered Descent Guidance with State-Triggered Constraints,” *Journal of Guidance, Control, and Dynamics*, 43(8), 2020. DOI: [10.2514/1.G004549](https://doi.org/10.2514/1.G004549).
+
+The 2013 paper supplies the translational soft-landing equations, mass depletion, nonzero thrust interval, and pointing-cone motivation. The 2020 paper supplies the full quaternion rigid-body model and the successive-convexification structure used by the MPC.
+
+The implementation adapts these methods to the native simulator. It does not reproduce either paper's numerical experiment. [MPC_DESIGN.md](MPC_DESIGN.md) specifies the controller and its scope.
+
+The 2013 reference is an academic optimal-control paper, not a description of Falcon 9 flight software. The simulator uses its constraint structure as a teaching model, then adds approximate Falcon 9-like dimensions and the later 6-DOF SCvx formulation.
+
+### How to read this document
+
+- Sections 1 to 4 define the simulated physics, mass model, and actuator limits.
+- Sections 5 to 7 explain SCvx, MPC acceptance, and the deterministic PD controller.
+- Sections 8 to 9 connect keyboard input and auto-land phases to control references.
+- Sections 10 to 13 state the paper mapping, terminology, code locations, and verification coverage.
+
+### Notation at a glance
+
+| Symbol | Meaning |
+| --- | --- |
+| $r_O$ | MuJoCo body-reference position |
+| $r_C$ | Current center-of-mass position used by guidance and MPC |
+| $v_C$ | Current center-of-mass velocity |
+| $R(q)$ | Body-to-world rotation matrix from quaternion $q$ |
+| $T$ | Main-engine thrust magnitude |
+| $\delta$ | Two-axis gimbal-angle vector |
+| $\tau_r$ | Equivalent roll moment produced by the RCS force pair |
+| $m$, $J(m)$ | Current mass and fuel-dependent inertia tensor |
+| $\nu_k$ | SCvx virtual-control variable; numerical, not physical |
+| $r_d$, $v_d$ | Desired position and velocity references |
+
+## 1. Frames and state
+
+The world frame is a nonrotating local Earth frame:
+
+- `+Z`: local vertical;
+- `+X`, `+Y`: horizontal directions;
+- `g = [0, 0, -9.81] m/s^2`.
+
+The body frame is fixed to the rocket with `+Z` along its longitudinal axis. The paper uses a different body-axis naming convention, but the equations are equivalent after permuting axes.
+
+MuJoCo represents the free body with
+
+\[
+q_{MJ}=(r_x,r_y,r_z,q_w,q_x,q_y,q_z)
+\]
+
+and generalized velocity
+
+\[
+v_{MJ}=(v_x,v_y,v_z,\omega_x,\omega_y,\omega_z).
+\]
+
+Thus the plant has `nq = 7` generalized coordinates and `nv = 6` mechanical degrees of freedom.
+
+The MPC prediction state follows the 2020 paper:
+
+\[
+x=(m,r,v,q,\omega)\in\mathbb{R}^{14}.
+\]
+
+Here `q` is a scalar-first body-to-world unit quaternion and `omega` is body-frame angular velocity.
+
+## 2. Coupled rigid-body dynamics
+
+The nonlinear prediction model is
+
+\[
+\dot m=-\alpha T,
+\qquad
+\dot r=v,
+\]
+
+\[
+\dot v=g+\frac{1}{m}R(q)T\hat t_B,
+\]
+
+\[
+\dot q=\frac{1}{2}q\otimes(0,\omega),
+\]
+
+\[
+J(m)\dot\omega=r_{T,B}(m)\times T\hat t_B+\tau_r e_3
+-\omega\times J(m)\omega.
+\]
+
+`R(q)` maps body-frame vectors into world coordinates. The engine site is fixed approximately 20.1 m below the vehicle reference, while the center of mass `c_B(m)` moves with propellant depletion:
+
+\[
+r_{T,B}(m)=(0,0,-20.1)-c_B(m).
+\]
+
+MuJoCo's free-joint translation is the vehicle reference position `r_O`, not the moving COM. Guidance therefore converts it using
+
+\[
+r_C=r_O+R(q)c_B,
+\qquad
+v_C=v_O+R(q)\left(\omega\times c_B+\dot c_B\right).
+\]
+
+The `dot c_B` term is evaluated from the mass-model derivative and current propellant flow. Hover and MPC states would otherwise report a false residual velocity while the liquid columns migrate.
+
+Both the optimizer and MuJoCo use this moment arm. MuJoCo applies main-engine force at the `thrust_origin` site through `mj_applyFT`, producing pitch and yaw moments when the engine gimbals.
+
+A single axial engine cannot create roll torque. The bounded scalar `tau_r` is the equivalent command for two physical RCS forces. Sites at `(+1.75, 0, 15.25)` and `(-1.75, 0, 15.25)` m receive equal and opposite tangential forces:
+
+\[
+F_+=(0,F,0),\qquad F_-=(0,-F,0).
+\]
+
+Their translational forces cancel while their axial moments add:
+
+\[
+F_++F_-=0,\qquad \tau_r=2(1.75)F.
+\]
+
+The modeled force limit is 5 kN per pod, producing at most 17.5 kN m. A 0.10 s first-order actuator response prevents instantaneous torque steps. The MPC optimizes the equivalent bounded moment; MuJoCo applies the actual lagged force pair.
+
+MuJoCo remains the authoritative plant. The MPC model is propagated with RK4 over each prediction interval, and quaternions are normalized after propagation.
+
+The world contact surface is a flat 1 km × 1 km MuJoCo plane centered near the launch complex, implemented with 500 m half-extents in `rocket.xml`. It provides collision support and visual context only; it does not introduce terrain elevation, Earth curvature, or additional aerodynamic effects. The launch mount and tower remain at world `X=0`; the full-stack return target is centered at `X=+100 m`. Both sites have their own dark pad and yellow target ring. Ordinary landing-lab exercises retain their origin target, while the autonomous launch-return uses the offset site.
+
+The 72 m launch tower is also fixed world geometry. Its columns, platforms, braces, and service arms have both contact masks disabled, so the tower provides scale and launch-pad context without applying forces to either stage. The 100 m return-site offset keeps the entire terminal approach and deployed landing-leg envelope well clear of the tower.
+
+Translation and rotation are coupled. Tilting thrust creates horizontal acceleration, but because the engine is below the COM it also creates angular acceleration. A controller cannot command lateral motion independently of attitude and still represent the rigid-body physics.
+
+## 3. Falcon 9-like scale and mass depletion
+
+The exterior geometry follows public Falcon 9 first-stage dimensions:
+
+- height: approximately 41.2 m;
+- diameter: 3.66 m;
+- deployed leg span: approximately 17 to 18 m.
+
+The landing-condition dynamics use:
+
+- initial mass: 30,000 kg;
+- dry mass: 21,000 kg;
+- initial landing propellant: 9,000 kg;
+- initial pitch/yaw inertia: approximately `4.3e6 kg m^2`;
+- initial roll inertia: approximately `6.0e4 kg m^2`.
+
+The autonomous launch-return button replaces that teaching loadout with an approximate full stack:
+
+- liftoff mass: 544,600 kg;
+- first-stage dry mass: 25,600 kg;
+- first-stage propellant: 407,500 kg;
+- first-stage wet mass: 433,100 kg;
+- second-stage dry mass: 4,000 kg;
+- second-stage propellant: 107,500 kg;
+- second-stage wet mass: 111,500 kg;
+- nine-engine sea-level thrust: approximately 7.607 MN;
+- three-engine and one-engine return clusters using 914 kN per engine;
+- 282 s ascent and 311 s return specific impulse assumptions.
+
+The second stage is combined with the first-stage mass properties through the parallel-axis theorem until separation. At separation its mass is removed from the booster, while its geometry transfers to a second free MuJoCo body. That body inherits the launch pose, angular rate, and translational velocity plus a 3 m/s axial separation push. For the first four seconds after release, the booster uses a temporary 20% three-engine clearance throttle; guidance then restores the approximate 40% return-engine minimum. The exact Block 5 map is not public; 40% follows Elon Musk's public description of the minimum as approximately 40% of one Merlin, replacing the simulator's earlier unsupported 57% assumption. After a one-second delay, the 981 kN upper-stage engine ignites at full throttle with a 12° body-$+Y$ gimbal for four powered seconds, imparting lateral velocity before recentering. The visible flame and thrust arrow use the same commanded direction. The upper-stage mass and approximate inertia decrease during the 348 s specific-impulse burn with 107,500 kg of propellant. At the 111,500 kg ignition mass the axial thrust acceleration is about 8.80 m/s², corresponding to a thrust-to-weight ratio near 0.90. On the simulator's steep suborbital path this initially reduces gravitational deceleration rather than immediately increasing vertical speed; after roughly 40 seconds of burn, mass depletion raises thrust-to-weight above one.
+
+The mass equation is
+
+\[
+\dot m=-\alpha\lVert T\rVert,
+\qquad
+\alpha=5\times10^{-4}.
+\]
+
+Mass properties are calculated from a calibrated dry stage and two effective liquid columns:
+
+- LOX: 72% of landing-reserve propellant, effective tank interval from `z=-2` to `z=14` m;
+- RP-1: 28%, effective tank interval from `z=-14` to `z=-2` m;
+- both columns use an effective 1.65 m radius and shorten toward their lower boundaries as propellant drains.
+
+The dry-stage COM and intrinsic inertia are solved so that the 30,000 kg initial condition has `c_B=0` and exactly matches the original `4.3e6, 4.3e6, 6.0e4 kg m^2` principal inertia. At half landing reserve the model gives approximately `c_z=-1.02 m` and `J_x=J_y=3.89e6 kg m^2`. At dry mass it gives approximately `c_z=-0.89 m` and `J=[3.71e6, 3.71e6, 4.77e4] kg m^2`.
+
+MuJoCo installs this moving inertial frame and principal inertia periodically as propellant burns. Hover guidance uses the corresponding COM position and velocity, while touchdown thresholds remain attached to the physical landing-leg/body reference. The MPC calls the same mass-property model and recomputes both `J(m)` and the engine-to-COM moment arm.
+
+`mj_setConst` evaluates the model at its reference pose, so the implementation preserves and restores the live free-joint position, quaternion, velocity, and simulation time around every mass-property recomputation. A regression test checks that mass-property updates preserve the live state.
+
+## 4. Thrust and actuator constraints
+
+The paper-style nonzero thrust interval is
+
+\[
+0<\rho_1\leq T\leq\rho_2,
+\]
+
+with
+
+\[
+T_{nominal}=720\text{ kN},
+\qquad
+\rho_1=144\text{ kN},
+\qquad
+\rho_2=576\text{ kN}.
+\]
+
+Before ignition, thrust is exactly zero. While lit, it cannot enter the forbidden interval between zero and 144 kN. The kill command is a deliberate hybrid transition directly from valid positive thrust to zero.
+
+This is why throttle is not modeled as an ordinary continuously variable input over $[0,T_{max}]$. The system has discrete engine modes (`OFF`, `LIT`, relightable `COAST`, and permanent `SHUTDOWN`) plus a continuous positive-thrust command while lit.
+
+The MPC control vector is
+
+\[
+u=(T,\delta_x,\delta_y,\tau_r).
+\]
+
+For `delta = [delta_x, delta_y]`, the unit body-frame thrust direction is
+
+\[
+\hat t_B=
+\begin{bmatrix}
+\sin\lVert\delta\rVert\,\delta/\lVert\delta\rVert\\
+\cos\lVert\delta\rVert
+\end{bmatrix}.
+\]
+
+The mechanical gimbal constraint is the second-order cone
+
+\[
+\lVert\delta\rVert_2\leq20^\circ.
+\]
+
+MuJoCo does not apply this command instantaneously. The mechanical gimbal state follows it through a 0.08 s first-order actuator. During terminal descent the response time becomes 0.20 s and available angle is scheduled to 3 degrees below 5 m, 1.5 degrees below 2.5 m, and 0.75 degrees below 1 m. Commands smaller than 0.15 degrees are suppressed in this terminal regime. The lag, angle limits and deadband suppress rapid command reversals near the ground.
+
+Positive-thrust magnitude commands also pass through a first-order actuator with a 0.35 s time constant. Fuel flow, applied force, plume/arrow dimensions, telemetry, and the GUI throttle indicator all use this lagged state. Ignition and relight spool smoothly from zero, while coast, kill, fuel-out, and touchdown cutoff still transition immediately to zero. The commanded lit throttle continues to obey the paper-inspired nonzero minimum; the physical startup transient is an explicit actuator-model exception that passes briefly through the otherwise forbidden low-thrust interval.
+
+Equivalent roll-RCS moment is bounded by
+
+\[
+|\tau_r|\leq1.75\times10^4\text{ N m}.
+\]
+
+The GUI direction pad represents the current world-direction demand. Telemetry separately reports the actual mechanical gimbal angle and body tilt.
+
+## 5. Successive convexification
+
+The nonlinear discrete dynamics are denoted
+
+\[
+x_{k+1}=F_d(x_k,u_k).
+\]
+
+At each SCvx iteration they are linearized numerically around a nominal trajectory:
+
+\[
+x_{k+1}\approx A_kx_k+B_ku_k+c_k+\nu_k.
+\]
+
+Hover uses forward finite differences to produce `A_k` and `B_k`; each node reuses the nominal dynamics evaluation for every state and control perturbation, cutting the number of RK4 propagations nearly in half. Landing retains central differences because its coupled attitude/descent trajectory was measurably more sensitive to one-sided Jacobians. Repeated fuel-dependent mass-property evaluations are cached by mass in both modes. The affine offset is
+
+\[
+c_k=F_d(\bar x_k,\bar u_k)-A_k\bar x_k-B_k\bar u_k.
+\]
+
+The virtual control `nu_k` is the artificial-infeasibility safeguard used in the SCvx literature. It receives a scaled L1 penalty of 300,000, allowing a convex subproblem to remain feasible if a linearization is temporarily inconsistent while making artificial state motion much more expensive than accepting physically reachable tracking error. Valid converged solutions drive virtual control toward zero.
+
+Scaled trust regions bound deviations from the nominal state and control trajectories. They address artificial unboundedness and keep first-order dynamics approximations locally meaningful.
+
+SCvx linearizes the nonlinear dynamics around a trajectory, solves the resulting convex approximation, and uses that solution for the next iteration. Virtual control keeps a poor initial trajectory from making the subproblem infeasible. Its large penalty discourages solutions that depend on artificial state motion.
+
+## 6. Convex subproblem
+
+Each CVXPY subproblem includes:
+
+- affine linearized dynamics with virtual control;
+- lower and upper thrust bounds;
+- second-order-cone gimbal bounds;
+- bounded roll torque;
+- dry-mass and ground-height constraints;
+- maximum tilt and angular-rate constraints;
+- quaternion upper norm and linearized lower-norm safeguards;
+- scaled state and control trust regions.
+
+The cost contains:
+
+- running state-tracking error;
+- a strong terminal state penalty to prevent receding-horizon procrastination;
+- control-slew regularization;
+- small fuel-use and non-thrust actuator penalties;
+- virtual-control and trust-region penalties.
+
+Clarabel solves the conic problem. CVXPY parameters allow the compiled problem structure to be reused as dynamics matrices and target states change.
+
+The default horizon has eight intervals of 0.35 s, for a 2.8 s prediction window. Three successive-convexification iterations are performed per update. The previous solution is shifted forward as the next warm start.
+
+## 7. Receding-horizon execution and deterministic PD control
+
+The simulator applies the paper's trajectory optimization in a receding horizon:
+
+1. measure the MuJoCo state;
+2. solve the finite-horizon SCvx problem;
+3. apply only the first thrust, gimbal, and roll command;
+4. advance the plant;
+5. shift the previous solution and solve again.
+
+The interactive launcher uses synchronous MPC by default. Each solve samples the current MuJoCo state and current GUI target, and its first command is applied before physics advances again. This removes state and target age at the cost of a brief rendering and input pause during each solve. A throwaway solve before window creation pays the one-time CVXPY canonicalization cost during startup.
+
+Passing `--async-mpc` selects a two-layer controller instead of holding delayed actuator commands. SCvx runs in a persistent worker process, separating its Python/CVXPY work and GIL from the MuJoCo/render process. Systems that cannot create the process worker retain a thread-based compatibility fallback:
+
+1. the background SCvx job records its request simulation time and sampled target;
+2. optimized controls are rolled through the nonlinear 6-DOF model to produce a physically consistent predicted trajectory;
+3. when the result arrives, the trajectory is sampled at its latency-compensated current point and compared with the measured position, velocity, attitude, and angular rate;
+4. results older than 0.35 s, inconsistent with the measured state, or too far from the latest target are rejected;
+5. a bounded preview point supplies position, velocity, and bounded vertical-acceleration references: 1.05 s for hover and one 0.35 s prediction interval for landing;
+6. the deterministic controller runs at every 0.005 s MuJoCo step and recomputes bounded thrust, gimbal, and roll commands.
+
+The full-stack mission knows in advance that return uses a three-engine cluster followed by one engine. Async mode constructs both corresponding CVXPY/SCvx problem objects in the solve process during ascent and keeps only their immutable configurations in the render process. Separation and engine-count transition then select the cached configuration in constant-time bookkeeping rather than constructing an optimization problem on the render/physics thread. The thread compatibility path prebuilds its local controllers in the background. Separation therefore selects a prepared controller; synchronous behavior is unchanged.
+
+On the development Mac, a representative active full-stack solve previously raised 5 ms physics-step latency from a 1.18 ms median to 30.2 ms p99 with a 59.5 ms maximum under the thread worker. The isolated process measured a 0.74 ms median, 2.77 ms p99, and 4.17 ms maximum under the same workload, keeping the main simulation inside its timestep budget.
+
+The preview reference is shifted and strongly blended toward the latest GUI or landing target. Hover uses a longer preview and moderately higher position gain for responsiveness. Landing uses one prediction interval, the original deterministic position gain, and the latest requested descent velocity for stronger alignment damping. Horizontal MPC acceleration is intentionally not used as direct feed-forward. A tall gimbaled rocket is non-minimum-phase: the engine initially counter-gimbals to rotate the stage, so the optimized early horizontal acceleration can point opposite the eventual translation. Feeding that acceleration directly into a body-direction controller caused the async loop to swing. The high-rate feedback loop instead infers the required horizontal acceleration from position and measured velocity, while retaining capped vertical feed-forward.
+
+Asynchronous MPC therefore never installs the delayed `MPCResult.control` vector. That raw first thrust/gimbal/roll command remains exclusive to synchronous mode. If no acceptable async trajectory exists, the same deterministic controller tracks the latest hover or landing target directly.
+
+During async landing, the vertical reference is always replaced by the latest moving descent target rather than retaining any fraction of the older trajectory's higher altitude. Positive vertical feed-forward is also suppressed whenever measured descent is already slower than the current requested descent. These two guards prevent delayed braking predictions from reversing the vehicle into a climb near the 100 m region; horizontal trajectory blending remains unchanged.
+
+The high-rate inner loop additionally enforces a no-climb descent envelope from 200 m down to the active terminal handoff: 7 m for the ordinary landing lab and 1 m for full-stack return. Whenever measured vertical velocity is slower than the negative descent reference, commanded net vertical acceleration is capped to a downward value between 0.5 and 3.0 m/s², proportional to the velocity mismatch. This guard applies to async tracking, synchronous full-stack trajectory tracking, and the full-stack PD fallback, so a delayed braking correction cannot become sustained ascent.
+
+For diagnosis, launching with `--async-mpc` overwrites `async_final_approach_log.csv` in the current working directory. The logger samples at 20 Hz only during landing phases below 250 m and flushes every row. It records phase and ownership, measured/target/reference vertical states, feed-forward and PD acceleration, descent-guard state, commanded/applied throttle, thrust, fuel, active-trajectory age, MPC status, and rejection reason.
+
+Every result is checked for solver status, finite values, actuator bounds, and nonlinear rollout defect. Until the first valid solution arrives, or whenever a solve fails, the simulator uses a deterministic 6-DOF PD controller. Failure cannot leave unconstrained or stale actuator commands active. The same ownership policy applies to powered full-stack return: after separation the MPC is rebuilt with the booster mass model and the active three- or one-engine limits, then owns thrust, gimbal, and roll above the terminal handoff whenever a result is accepted.
+
+The stronger virtual-control penalty matters most at high-energy landing-burn ignition. With the earlier weight of 8,000, the first nominally optimal full-throttle landing solve used about 1.30 scaled virtual control and produced about 1.30 nonlinear defect, far above the 0.20 acceptance limit. At 300,000, the ordinary landing state solves with roughly 0.005 defect and a physically correct maximum-thrust first command. The full-stack booster uses a still stronger 30,000,000 weight because its entry velocity and long-stage inertia otherwise tempt the short horizon to buy an unphysical velocity correction through virtual control. A representative 250 m, -26 m/s one-engine return case then accepts a minimum-throttle solution with negligible virtual control instead of falling back immediately. Rejected attempts remain under PD control.
+
+A result must pass these checks before it can control the plant:
+
+1. Clarabel must return an acceptable solve status.
+2. Predicted states and controls must be finite and remain inside actuator bounds.
+3. The optimized controls are rolled through the nonlinear 6-DOF model.
+4. The normalized convex-versus-nonlinear defect must not exceed 0.20 for the ordinary landing lab. Synchronous full-stack return permits 0.45 because its accepted trajectory is closed-loop tracked at 200 Hz and replanned every 0.30 s; async validation retains the stricter state/age checks before a trajectory can become active.
+
+If a later successive-convexification refinement fails after at least one valid conic iterate, the last valid iterate is retained rather than discarded. It is accepted only if the same independent nonlinear rollout and defect test still pass. A failure before the first valid iterate remains an ordinary MPC rejection.
+5. Async mode additionally checks result age, state mismatch, trajectory lifetime, and target movement.
+
+The nonlinear rollout check is what prevents virtual control or a poor local linearization from silently becoming a physical command.
+
+Telemetry distinguishes:
+
+- `SCVX MPC: OPTIMAL`;
+- `SCVX MPC SYNC+INNER: OPTIMAL` for full-stack return;
+- `SCVX MPC ASYNC-PROCESS+INNER: OPTIMAL`, or `ASYNC-THREAD+INNER` on the compatibility fallback;
+- `SCVX MPC: WARMING`;
+- `6-DOF TERMINAL`;
+- `6-DOF PD`, including async rejection reasons such as `STALE`, `STATE_MISMATCH`, or `DYNAMICS_DEFECT`;
+- manual `6-DOF TVC` control.
+
+The ordinary landing simulator uses a normalized nonlinear-defect acceptance limit of 0.20. Synchronous full-stack return uses 0.45 together with 200 Hz closed-loop trajectory tracking and 0.30 s replanning; async results still face age and measured-state consistency checks. MPC gimbal authority is scheduled to 5° for hover and 6° for high-altitude landing, inside the 20° mechanical cone. The deterministic PD controller can use the 6° envelope when stronger recovery authority is required.
+
+### Deterministic 6-DOF PD controller
+
+The translational PD law runs at the 0.005 s MuJoCo step:
+
+\[
+a_d=a_{ff}+K_p(r_d-r)+K_v(v_d-v),
+\]
+
+with
+
+\[
+K_p=\operatorname{diag}(0.12,0.12,0.80),\qquad
+K_v=\operatorname{diag}(0.70,0.70,1.80).
+\]
+
+It converts desired acceleration to world-frame force,
+
+\[
+F_d=m(a_d-g),
+\]
+
+then clips thrust magnitude to the 20 to 80% interval and force direction to the active gimbal cone. The SO(3) attitude PD law below turns the desired force direction into pitch/yaw gimbal torque and roll-RCS torque. `TERMINAL ACTIVE` uses the same coupled PD structure with the scheduled low-altitude gimbal limits and deadband; it is an intentional mode, not an MPC rejection.
+
+The proportional term reacts to displacement from the requested trajectory. The derivative term reacts to relative velocity and supplies damping. PD is inexpensive and runs every physics step, but unlike MPC it does not explicitly plan several future constrained states.
+
+This PD controller can reject modest drag-model error or wind disturbance after those forces create position and velocity error, provided enough thrust and gimbal authority remain. It is not sufficient by itself for a credible atmospheric landing model. There is no integral action, wind-state estimator, disturbance observer, relative-airspeed feedforward, dynamic-pressure gain scheduling, or aerodynamic force/moment prediction. Strong steady wind can therefore create offset, and gusts can exceed the available attitude or lateral-force bandwidth.
+
+Adding drag and wind robustly requires at least a relative-air-velocity model $v_{air}=v-w$, aerodynamic force and center-of-pressure moment models, a wind/disturbance estimate, and either integral/disturbance-observer augmentation or robust MPC. Grid-fin authority and constraints should be scheduled with dynamic pressure and angle of attack rather than treated as fixed control authority.
+
+## 8. Manual 6-DOF control
+
+Manual WASD input defines a desired world-frame body-up direction. A full SO(3) attitude controller constructs a desired rotation with fixed heading and computes
+
+\[
+e_R=\frac{1}{2}\left(R_d^TR-R^TR_d\right)^\vee,
+\]
+
+\[
+\tau_d=-K_Re_R-K_\omega\omega.
+\]
+
+Pitch and yaw torque demands are allocated to lateral engine force using the current engine-to-COM lever arm. Roll demand is sent to the bounded, lagged RCS force pair. Axis-specific gains account for the large difference between pitch/yaw and axial inertia.
+
+The heading constraint regulates all three rotational coordinates. Aligning only the body vertical axis would leave rotation about that axis without a restoring attitude error.
+
+## 9. Hover and auto-land references
+
+Hover captures a target position with zero target velocity, identity attitude, and zero angular velocity. WASD advances the horizontal target at 3 m/s, and Up/Down moves its altitude at 2 m/s. The target is clamped to a 3.5 m horizontal and 2 m vertical lead relative to the measured center of mass. While an input remains held, this bounded position reference advances with the rocket; it cannot run several metres ahead during the initial counter-tilt and provoke a large corrective swing. Manual lateral-command slew is 2.4 per second rather than 1.6 per second. Auto-land additionally supplies a nonzero vertical target velocity so the controller tracks a deliberate descent profile rather than chasing a moving position target whose nominal velocity is incorrectly zero.
+
+Auto-land supplies references through three powered/ballistic phases:
+
+### Launch-return mission
+
+The autonomous launch-return mode is a pitched full-stack boost-separation-landing experiment layered above the normal landing state machine. During BOOST, all nine modeled engines run at their upper bound. The first kilometre remains vertical. Between 1 km and 45 km, a cubic smooth-step schedule increases pitch from 0° to 18° toward world $+X$:
+
+\[
+s=\operatorname{clip}\left(\frac{h-1000}{45000-1000},0,1\right),
+\qquad
+\theta=18^\circ s^2(3-2s).
+\]
+
+The pitch program produces horizontal velocity and a downrange ballistic arc. At each physics step guidance also predicts the zero-thrust apogee
+
+\[
+h_a=h+\frac{\max(v_z,0)^2}{2g}.
+\]
+
+When $h_a$ reaches the 130 km target, or first-stage propellant reaches the safety floor, the 111,500 kg second stage separates into its free-flight body and the booster changes to a three-engine cluster. The exact deterministic separation state is regression-tested because it changes with the full-stack mass assumptions.
+
+The booster does not immediately coast. It slews toward a 75° retrograde boost-back attitude. Minimum throttle is used during the large attitude change, then maximum throttle shifts the predicted vacuum impact point back toward the launch site. The launch ignition remains continuous through this maneuver. When the compensated impact target is reached, the engine shuts down and the booster enters ballistic coast. An equivalent bounded pitch/yaw cold-gas torque brings the stage upright during coast.
+
+The engine model gives the full-stack mission exactly two ignition events: launch and one combined reentry/landing relight. Consequently, the high-altitude state machine cannot chatter between coast and descend. Once ignition count two is reached, re-coast is forbidden and the engine remains lit until touchdown cutoff.
+
+The three-engine entry-burn relight uses a dedicated stopping-distance factor of 1.7, compared with 1.25 for the ordinary landing lab. This deterministic event gate decides when a positive-thrust optimization becomes physically available; it does not dictate the subsequent actuator history. After ignition, accepted MPC solutions command the powered return while the separately tuned one-engine and terminal gates remain safety-critical mode logic. The larger ignition margin intentionally spends more propellant to reduce peak entry speed in the vacuum model, which has no atmospheric drag to provide passive deceleration.
+
+The 3-D thrust visualization exposes the active cluster at the physical engine-bell coordinates: nine arrows during ascent, the center engine plus two opposed outer engines during the three-engine return burn, and one center arrow during terminal landing. A separate arrow follows the free upper-stage body after its engine ignites. Arrow direction uses the lagged mechanical gimbal state and points along exhaust flow, opposite the applied reaction force. These are per-engine visualizations of the aggregate cluster command; the dynamics still apply one equivalent resultant and do not model differential throttle or differential gimbal allocation.
+
+If MPC is disabled, pending, or rejected during the continuous reentry/landing burn, the PD fallback uses downward speed $v$, height $h$, and target touchdown speed $v_t$ to request
+
+\[
+a_s=1.08\max\left(\frac{v^2-v_t^2}{2\max(h-1,0.2)},0\right),
+\]
+
+then commands $T=m(g+a_s)$ subject to the active engine bounds. Three engines are retained until the requested terminal thrust fits inside the one-engine interval; the controller then switches once to the center engine and rebuilds the MPC with that actuator set. The fallback's horizontal acceleration uses a finite-time pad-intercept law whose time scale is twice the instantaneous vacuum fall time, avoiding the earlier over-aggressive lateral oscillation caused by ignoring powered-braking duration. Accepted full-stack MPC results are rolled through the nonlinear model and tracked by the high-rate inner loop in both synchronous and async modes. Synchronous operation starts from the current state without worker latency; async operation additionally samples and validates the trajectory at its latency-compensated time. Neither path replaces the accepted trajectory's vertical plan with the stopping-distance fallback.
+
+This remains suborbital and simplified. A realistic launch would need atmospheric drag, max-Q and engine schedules, a much larger gravity turn toward orbital velocity, navigation over a rotating/curved Earth, orbital upper-stage guidance, and mission-specific boost-back/entry geometry.
+
+### Align
+
+Normal auto-land establishes a staging altitude at least 25 m above the pad. If auto-land is selected below that height, the vehicle climbs to staging before descent; if selected higher without significant upward velocity, it holds the current altitude. A manual high-thrust takeoff can have substantial upward momentum when LAND is clicked. Freezing staging at the click altitude would make the rocket overshoot and then spend a long time returning to an obsolete target. Guidance therefore estimates the strongest downward acceleration available while the lit engine remains at its nonzero minimum thrust,
+
+\[
+a_b=g-\frac{T_{\min}}{m},
+\]
+
+and raises staging to at least the corresponding upward stopping altitude,
+
+\[
+h_b=h+\frac{\max(v_z,0)^2}{2a_b}.
+\]
+
+Staging captures the braking apex required by the current upward trajectory. The lateral reference leads the rocket toward the pad by 4 m through 18 m altitude, growing by 0.15 m per additional metre up to 8 m. The vertical lead remains 2 m. Fuel-reserve takeover normally holds the current altitude because an emergency fuel trigger should not spend propellant climbing, but it uses the same braking-apex floor when the vehicle is already rising.
+
+Descent cannot begin until alignment is completed at staging. The capture gate requires lateral error below 2 m, horizontal speed below 1.0 m/s, staging-altitude error below 2 m, and vertical speed below 1.5 m/s. There is no timeout and no descent-time feasibility bypass. Horizontal correction remains active after the transition, but the large capture maneuver is completed high, before the aggressive descent and 7 m terminal handoff.
+
+### Coast and landing-burn ignition
+
+Above 32 m, an aligned vehicle may temporarily shut the main engine off while retaining permission to relight. Entry additionally requires body tilt below 2.5 degrees and angular-rate norm below 0.12 rad/s. The landing-burn ignition altitude for current downward speed $v$ is
+
+\[
+h_i(v)=1.25\frac{\max(v^2-v_t^2,0)}{2(T_{\max}/m-g)}
++v\tau_i+\frac{1}{2}g\tau_i^2+6\ \mathrm{m},
+\]
+
+with target terminal speed $v_t=0.5$ m/s and modeled ignition/actuator allowance $\tau_i=0.45$ s. Coast is used only when at least 5 m of altitude remains between the entry point and this gate. At $h\le h_i(v)$, the engine relights at the 80% upper throttle bound and guidance enters DESCEND.
+
+After a coast relight, the vertical reference does not immediately collapse to the ordinary 12 m/s high-altitude band. It follows
+
+\[
+v_{d,C}(h)=\max\left(v_d(h),
+\sqrt{v_t^2+2a_C\max(h-6,0)}\right),
+\qquad a_C=4\ \mathrm{m/s^2}.
+\]
+
+This energy corridor retains a rapid descent at high altitude and smoothly reduces the permitted downward speed as stopping distance disappears. In the current vacuum model, a from-rest 1,000 m case relights near 590 m after reaching about 90 m/s and lands with propellant remaining.
+
+Because the model currently has only a roll RCS couple, pitch and yaw are uncontrolled while main thrust is zero. Coast therefore starts only from a quiet upright state. It aborts into an early powered relight if tilt exceeds 5 degrees, angular rate exceeds 0.25 rad/s, horizontal error exceeds 2.75 m, or horizontal speed exceeds 1.5 m/s. The landing legs remain stowed. A user `KILL ENGINE` command still transitions to permanent `SHUTDOWN`; it does not share the relightable coast state.
+
+### Descend
+
+The target altitude and vertical-velocity reference descend at:
+
+- 12 m/s above 30 m;
+- 8 m/s from 18 to 30 m;
+- 5 m/s from 10 to 18 m;
+- 3 m/s from 5 to 10 m;
+- 1.5 m/s from 2.5 to 5 m;
+- 0.6 m/s from 1 to 2.5 m;
+- 0.25 m/s below 1 m.
+
+The high-altitude bands create a visibly forceful approach, while the final bands reserve enough altitude for powered braking. The altitude reference is integrated continuously, and the velocity reference switches directly from one band speed to the next. No zero-speed waypoint is inserted at a band boundary, and the target altitude is not reset against the measured vehicle altitude.
+
+The MPC cost uses a trajectory of reference states rather than repeating one target state at every prediction node. If the current reference is $(r_d,v_d)$, prediction node $k$ uses
+
+\[
+r_{d,k}=r_d+k\Delta t\,v_d,
+\qquad
+v_{d,k}=v_d.
+\]
+
+Advancing the position reference makes it consistent with the requested downward velocity. A fixed-altitude reference combined with downward velocity produced large nonlinear defects, frequent PD selection and abrupt controller changes.
+
+MPC owns hover, alignment, ordinary descent, and powered full-stack return whenever an optimized result is accepted. The ordinary landing lab hands off at 7 m to the deterministic coupled 6-DOF terminal PD law. The full-stack return keeps MPC eligible down to 1 m, because handing its high-energy stopping law to PD at 7 m can arrest descent above the pad and settle into a minimum-thrust hover. Ballistic coast remains outside the current MPC because its convex dynamics impose the lit engine's positive minimum-thrust bound; launch pitch, separation, ignition, engine-count selection, and cutoff are likewise high-level hybrid events rather than finite-horizon actuator optimization. The low-altitude law uses the same physical gimbal and roll actuators but is more robust when allowable gimbal authority tightens to 3°, 1.5°, and 0.75°. The GUI labels this scheduled mode `TERMINAL ACTIVE`; `PD ACTIVE` reports PD ownership during MPC warm-up or after a rejected solve.
+
+Engine cutoff normally occurs within 0.15 m of the landed body/leg reference height when horizontal error is below 0.50 m, horizontal speed is below 0.30 m/s, and vertical speed is between -0.35 and +0.15 m/s. A second arrested-descent latch below 0.30 m permits 0.75 m horizontal error and 3.0 m/s horizontal speed once vertical velocity reaches at least -0.35 m/s. This prevents the precise gate from being crossed without shutdown and eliminates minimum-thrust relaunches. A fuel-reserve takeover uses a 0.30 m height, 1.00 m horizontal error, and 0.60 m/s horizontal-speed envelope. The full-stack hover-slam path instead targets 0.10 m/s, subtracts one throttle-actuator time constant of travelled distance from its available stopping height, and multiplies required deceleration by 1.20. Below 1 m, any vertical speed at or above -0.75 m/s latches engine shutdown provided the booster remains within a broad 10 m / 5 m/s lateral safety envelope. MuJoCo then resolves residual motion through landing-leg contact and pad friction.
+
+### Landing-leg deployment
+
+The four legs are stowed along the fuselage in manual flight, hover, ALIGN, and high-altitude DESCEND. The deployment command latches when DESCEND reaches the same 7 m threshold used for terminal-controller handoff. Over the next 1.25 s, normalized deployment state $u$ advances from zero to one and is converted to a zero-slope smoothstep fraction
+
+\[
+s(u)=3u^2-2u^3.
+\]
+
+Each foot moves from its stowed body-frame position $p_s$ to its deployed position $p_d$:
+
+\[
+p_f=(1-s)p_s+sp_d.
+\]
+
+The main leg and folding strut are MuJoCo capsules. For endpoints $a$ and $b$, the runtime geometry uses midpoint $c=(a+b)/2$, half-length $\ell=\lVert b-a\rVert/2$, and a quaternion that rotates the capsule's local $+z$ axis onto $(b-a)/\lVert b-a\rVert$. Foot orientation is interpolated with quaternion SLERP. Because these are the actual model geoms rather than separate decorations, rendering and collision follow the same deployment state. Once started, deployment continues through cancel or abort and only reset returns it to zero.
+
+The vehicle's explicit rigid-body inertial model is intentionally unchanged by this visual/contact animation; leg articulation does not yet exchange momentum with the stage or alter its inertia tensor. Folded feet cannot support the initial vehicle, so an invisible world-fixed launch mount contacts the octaweb at reset. It is disabled permanently after the body rises 5 cm or as soon as auto-land starts, and reset restores it.
+
+### Fuel-reserve takeover
+
+Outside auto-land, the simulator periodically estimates landing propellant from a transparent impulse approximation. For height $h$, the nominal profile time is
+
+\[
+t_d(h)=\int_0^h \frac{d\eta}{v_d(\eta)},
+\]
+
+where $v_d(h)$ is the nonzero piecewise descent speed above. The alignment-time estimate is
+
+\[
+t_a=\max\left(
+\frac{\lVert r_{xy}\rVert}{1.5},
+\frac{\lVert v_{xy}\rVert}{0.75},
+\frac{\max(v_z,0)}{g-T_{\min}/m}
+\right)+2.5\ \mathrm{s}.
+\]
+
+There are two takeover branches. If the stage is above 32 m, within 0.75 m of the pad axis, below 0.5 m/s horizontal speed, below 2.5 degrees tilt, and below 0.12 rad/s angular rate, powered alignment is unnecessary. The engine can enter relightable coast immediately. With ballistic apex
+
+\[
+h_a=h+\frac{\max(v_z,0)^2}{2g},
+\]
+
+the same ignition intersection gives powered height $h_p$ and ignition speed $v_C$. The direct-coast estimate is
+
+\[
+m_{f,D}=\gamma(v_z)\,\alpha m
+\left[g\,t_{d,C}(h_p)+v_C+\lVert v_{xy}\rVert\right]+50\ \mathrm{kg},
+\]
+
+where
+
+\[
+\gamma(v_z)=\max\left(0.89,\;0.95-0.0006\max(v_z,0)\right).
+\]
+
+The factor approximates mass depletion over the long burn and was calibrated against deterministic full-flight rollouts. The normal external 1.05 takeover multiplier still applies. A full-throttle vertical launch crosses this estimate near 5.15 tonnes and finishes with roughly 70 to 85 kg depending on MPC ownership; the automated regression requires less than 100 kg. A stationary 1,000 m PD-controlled case crosses near 4.0 tonnes and finishes near 45 kg.
+
+If direct coast is unsafe because lateral or attitude correction is still required, the estimator retains the powered-alignment branch below.
+
+For a staging height $h_s$ above 32 m, the estimator finds powered-descent height $h_p$ from the ballistic intersection
+
+\[
+h_p=h_i\left(\sqrt{2g(h_s-h_p)}\right).
+\]
+
+If that saves less than 5 m, $h_p=h_s$ and coast is skipped. For a planned coast, powered time integrates $1/v_{d,C}(h)$ only over $[0,h_p]$; otherwise it uses the ordinary descent profile. Both are multiplied by 1.10. The estimate also includes the future ballistic speed $v_C=\sqrt{2g(h_s-h_p)}$ that must be removed after ignition. With current wet mass $m$, gravity magnitude $g$, horizontal speed $v_{xy}$, and excess downward speed $v_e=\max(-v_z-v_d(h_s),0)$, the impulse estimate is
+
+\[
+m_{f,I}=1.10\alpha\left[m g(t_a+1.10t_{d,C}(h_p))
++m(\lVert v_{xy}\rVert+v_e+v_C)\right]+250\ \mathrm{kg}.
+\]
+
+Rollout testing also showed that triggering solely from the impulse approximation could wait until the vehicle was too light for reliable lateral capture. The minimum safe takeover reserve is therefore
+
+\[
+m_{f,C}=\min\left(9000,
+5500+25\min(h_p,40)+320\lVert r_{xy}\rVert\right)\ \mathrm{kg},
+\]
+
+where $h_p$ is the predicted powered-descent height in metres. Capping its contribution at 40 m reflects that additional ballistic altitude costs velocity-change impulse rather than hover time; that impulse is already present in $m_{f,I}$. The stronger horizontal term preserves the empirically tested lateral-capture reserve. The displayed landing estimate is
+
+\[
+m_{f,\mathrm{land}}=\max\left(m_{f,I},\frac{m_{f,C}}{1.05}\right).
+\]
+
+When the engine is lit, the rocket is above the end-burn cutoff height, and remaining fuel satisfies
+
+\[
+m_f\leq 1.05\,m_{f,\mathrm{land}},
+\]
+
+auto-land takes over and the trigger latches for the flight. The threshold is capped at the initial 9,000 kg reserve, so an already marginal state requests landing immediately. Eligible direct-coast states shut down immediately and use their ballistic apex; other reserve takeovers use the current altitude as the powered alignment target except where upward momentum requires a higher braking apex. Both estimator branches are empirical guards for this controller, not MPC-derived certified propellant-to-go bounds.
+
+### Controller ownership indicator
+
+The GUI displays the controller that currently owns the actuators:
+
+- `LAUNCH ACTIVE` during the bounded maximum-thrust boost;
+- `MPC ACTIVE` after a valid SCvx result is accepted;
+- `COAST ACTIVE` while the engine is armed at zero thrust;
+- `TERMINAL ACTIVE` during the scheduled final-approach handoff;
+- `PD ACTIVE` during MPC warm-up or after a rejected solve;
+- `MANUAL TVC` when hover and auto-land are inactive.
+
+Phase logic supplies the reference trajectory. MPC tracks it with coupled six-degree-of-freedom dynamics and actuator constraints.
+
+## 10. What is and is not reproduced from the papers
+
+Implemented:
+
+- mass, translation, quaternion, and angular-rate states;
+- rigid-body torque from thrust applied at an engine moment arm;
+- nonzero thrust and gimbal constraints;
+- repeated first-order dynamics linearization;
+- convex conic subproblems;
+- virtual control and trust regions;
+- warm starts and real-time replanning.
+
+Not implemented:
+
+- optimizer-selected free ignition time (the state machine uses the explicit
+  stopping-distance gate above);
+- free final time;
+- atmospheric lift and drag;
+- velocity-triggered angle-of-attack constraints;
+- exact first-order-hold discretization matrices;
+- a proof of convergence or global optimality.
+
+This SCvx-inspired 6-DOF MPC tracks a reference trajectory. It does not solve a pure minimum-fuel problem or implement the full 2020 algorithm.
+
+## 11. Is the project 6-DOF?
+
+The model and controllers use six degrees of freedom:
+
+- The MuJoCo plant is mechanically 6-DOF.
+- The manual and PD controllers regulate all three translation and all three rotation coordinates.
+- The MPC predicts and controls the complete 14-state mass/6-DOF rigid-body model.
+- Main-engine translation and pitch/yaw rotation are physically coupled through the engine moment arm.
+- Roll is controlled by an explicit opposed-force RCS couple because a single axial engine cannot generate roll moment.
+
+The project models coupled translation and rotation, while leaving the paper's complete mission-level optimal-control problem outside its scope.
+
+## 12. Code map
+
+| Concept | Main implementation location |
+| --- | --- |
+| Engine modes, throttle bounds, and fuel flow | `src/rocket_landing/controller.py` |
+| Draining-tank COM and inertia | `src/rocket_landing/mass_properties.py` |
+| Nonlinear 14-state model and SCvx solver | `src/rocket_landing/mpc.py` |
+| Guidance phases, PD controller, actuator dynamics, and GUI | `src/rocket_landing/sim.py` |
+| MuJoCo geometry, joints, contacts, and actuator sites | `src/rocket_landing/assets/rocket.xml` |
+| Behavioral examples and regressions | `tests/` |
+
+For a teaching-oriented code reading, start with `RocketSimulation.step()` in `sim.py`, follow `_update_landing_guidance()` to see how references are created, then compare `_update_hover_controller()`, `_pd_hover_guidance()`, and `SixDofMPC.solve()`.
+
+## 13. Verification
+
+The test suite covers:
+
+- MJCF compilation and free-joint dimensions;
+- Falcon 9-like vehicle proportions;
+- thrust, gimbal, tilt, ground, mass, and angular-rate constraints;
+- quaternion and rigid-body prediction dynamics;
+- physical engine-pivot pitch/yaw coupling;
+- shared fuel-dependent COM/inertia and engine-lever-arm calculations;
+- zero-net-force RCS roll-couple allocation and actuator lag;
+- full heading and axial-spin recovery;
+- virtual-control/nonlinear-defect diagnostics;
+- forced solver failure and PD-controller selection;
+- hover braking and position recovery;
+- PD and SCvx-MPC landing/cutoff rollouts;
+- stowed, progressive, latched, and reset landing-leg deployment;
+- ground settling and mass-update teleport regression;
+- GUI controls and indicators.
+
+Run the complete suite with:
+
+```bash
+.venv/bin/pytest -q
+```

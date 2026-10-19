@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#05070a" />
+    <title>SCvx formulation · SCvx MPC Demos</title>
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="stylesheet" href="./src/shell.css" />
+    <style>
+      main {
+        max-width: 940px;
+        margin: 55px auto;
+        padding: 0 25px 65px;
+      }
+      h1 {
+        font-size: 40px;
+        letter-spacing: -1.4px;
+        font-weight: 500;
+      }
+      h2 {
+        font-size: 23px;
+        margin-top: 48px;
+        font-weight: 500;
+      }
+      h3 {
+        font-size: 16px;
+        margin-top: 28px;
+      }
+      p,
+      li {
+        font-size: 15px;
+        line-height: 1.85;
+        color: var(--text);
+      }
+      a {
+        color: var(--accent);
+      }
+      pre {
+        padding: 22px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        overflow-x: auto;
+        line-height: 1.85;
+        font-size: 13px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      td,
+      th {
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+      }
+      th {
+        font-weight: 600;
+      }
+      code {
+        font-size: 0.9em;
+      }
+      nav {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+      }
+      section {
+        scroll-margin-top: 90px;
+      }
+      .intro {
+        font-size: 18px;
+        max-width: 780px;
+      }
+      .equation-note {
+        font-size: 13px;
+      }
+      .links {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+        margin-top: 50px;
+        font-size: 12px;
+      }
+      @media (max-width: 600px) {
+        .demo-nav {
+          flex-wrap: wrap;
+          padding: 14px 16px;
+          gap: 14px;
+        }
+        .links {
+          gap: 16px;
+          font-size: 13px;
+        }
+        main {
+          margin-top: 32px;
+        }
+      }
+    </style>
+    <link rel="stylesheet" href="./src/language.css" />
+  </head>
+  <body>
+    <nav class="demo-nav">
+      <a class="site-name" href="./">← SCvx MPC Demos</a>
+      <div class="links">
+        <a href="#formulation">Equations</a><a href="#car">Car</a
+        ><a href="#rocket">Rocket</a><a href="#papers">Papers</a>
+      </div>
+    </nav>
+    <main>
+      <h1>How the controller works</h1>
+      <p class="intro">
+        Each demo plans a short section of flight and checks it against
+        nonlinear dynamics. It applies the first actuator command, then plans
+        again from the simulated state.
+      </p>
+      <p>
+        Both controllers adapt the repository's SCvx approach to tracking a
+        flight reference. They use fixed prediction times and scheduled mission
+        phases. They do not implement the paper's full free-final-time problem
+        or all of its state-triggered constraints, and its convergence
+        guarantees do not carry over to these demos.
+      </p>
+      <section id="formulation">
+        <h2>State, dynamics and convex subproblem</h2>
+        <p>
+          The state has 14 components: mass <i>m</i>, world position <i>r</i>,
+          world velocity <i>v</i>, a scalar-first unit quaternion <i>q</i>, and
+          body angular velocity <i>ω</i>. Rotation <i>R(q)</i> maps body vectors
+          into the world. The rocket uses position and velocity at its changing
+          center of mass; the car carries gas centrally.
+        </p>
+        <pre aria-label="Rigid body equations">
+x = [m, rₓ, rᵧ, r_z, vₓ, vᵧ, v_z, q₀, q₁, q₂, q₃, ωₓ, ωᵧ, ω_z]
+ṙ = v
+v̇ = g + (R(q) Fᵦ + Fdrag) / m
+q̇ = ½ q ⊗ [0, ω]
+ω̇ = J(m)⁻¹ [τᵦ − ω × J(m)ω]
+
+Rocket: ṁ = −‖Fᵦ‖ / (Isp g₀)
+        τᵦ = (rengine − cᵦ(m)) × Fᵦ + τRCS
+Car:    ṁ = −Σ fⱼ / vexit
+        Fᵦ = Σ dⱼ fⱼ,   τᵦ = Σ (rⱼ × dⱼ) fⱼ</pre
+        >
+        <p>
+          The predictor integrates these equations with RK4 and normalizes the
+          quaternion after each step. Finite differences around a nominal
+          nonlinear trajectory give the local discrete dynamics. The solver
+          scales the variables before building the sparse conic problem:
+        </p>
+        <pre aria-label="SCvx subproblem">
+min  Σₖ ‖W (xₖ − xref,ₖ)‖² + 2‖W (xN − xref,N)‖²
+     + λu Σₖ ‖uₖ − ūₖ‖² + λv Σₖ ‖νₖ‖₁ + λfuel Σₖ,ⱼ uₖ,ⱼ
+
+s.t. x₀ = xmeasured
+     xₖ₊₁ = Aₖ xₖ + Bₖ uₖ + cₖ + νₖ
+     ‖xₖ − x̄ₖ‖∞ ≤ ρx,   ‖uₖ − ūₖ‖∞ ≤ ρu
+     actuator constraints, dry-mass bound, car gas budget
+
+Aₖ = ∂ΦRK4 / ∂x,   Bₖ = ∂ΦRK4 / ∂u
+cₖ = ΦRK4(x̄ₖ, ūₖ) − Aₖ x̄ₖ − Bₖ ūₖ</pre
+        >
+        <p>
+          The car uses the fuel term. Virtual control <i>ν</i> keeps the
+          linearized subproblem feasible, with an L1 penalty of 30,000 in scaled
+          coordinates. Clarabel solves each subproblem as a quadratic cone
+          program. The predictor then simulates the candidate controls with
+          nonlinear dynamics and linearizes around that trajectory for the next
+          iteration.
+        </p>
+        <p>
+          To accept a plan, Clarabel must report an optimal result. Every
+          control must respect the actuator bounds, all states must be finite,
+          and virtual control must stay below 0.01. The largest scaled nonlinear
+          defect must be below 0.12 for the car or 0.04 for the rocket. A
+          rejected plan stops the simulation and stays visible for inspection.
+          These numerical checks do not establish flight safety.
+        </p>
+        <p class="equation-note">
+          The blue path shows a prediction available at the displayed time;
+          silver shows the path already flown. The worker measures solve
+          latency. Plan age, nonlinear defect and virtual control show how
+          recent the plan is and how closely it agrees with nonlinear dynamics.
+        </p>
+        <p>
+          Implementation: <a href="./src/compute/scvx.js">SCvx loop</a>,
+          <a href="./src/compute/conic.js">sparse conic builder</a>,
+          <a href="./src/compute/math.js">RK4 and quaternion math</a>. The
+          original Python formulation is documented in
+          <a
+            href="https://github.com/lzyang2000/SCvx-MPC/blob/main/MPC_DESIGN.md"
+            >MPC_DESIGN.md</a
+          >
+          and
+          <a href="https://github.com/lzyang2000/SCvx-MPC/blob/main/METHODS.md"
+            >METHODS.md</a
+          >.
+        </p>
+      </section>
+      <section id="car">
+        <h2>Car: six fixed cold-air jets</h2>
+        <p>
+          MuJoCo advances the car throughout ground drive, the 180° C-ramp,
+          flight and landing. Four wheel hinges receive drive or braking torque,
+          and bounded fan suction holds the tires against a ramp made of 160
+          collision segments. The car leaves when its tires lose ramp contact at
+          the upper lip. SCvx controls the six jets in flight. Each nozzle force
+          acts at its body-fixed mounting point. MuJoCo tire contact cuts the
+          jets and governs the rollout.
+        </p>
+        <p>
+          The jump uses a flat approach. Choose a landing position and whether
+          to require a 360° barrel roll. The C-ramp always requires recovery
+          from its inverted release. Both maneuvers use the same six jets and
+          250 kg air limit.
+        </p>
+        <p>
+          With whole-flight planning enabled, guidance first supplies an initial
+          guess and flight duration. A separate SCvx solve optimizes every
+          airborne control together, using terminal position, velocity, attitude
+          and angular-rate costs plus air use. Intermediate positions are free.
+          Three orientation gates preserve a requested full roll. Local
+          separating planes and body-height constraints keep the trajectory
+          above the ground and clear of the parked vehicles.
+        </p>
+        <p>
+          The planner uses a 0.12 s grid and up to 35 iterations. A nonlinear
+          merit check backtracks control changes, and a finer rollout verifies
+          clearance before acceptance. Flight duration and the contact sequence
+          remain fixed. The accepted trajectory supplies references to the
+          short-horizon MPC, which replans from measured states. The amber
+          dashed line shows the complete plan; blue shows the current MPC
+          prediction. Failed planning stops the run. Disabling whole-flight
+          planning uses the guidance reference directly.
+        </p>
+        <p>
+          Five original simplified meshes represent the parked Model 3, Model Y,
+          Semi, Cybertruck and Cybercab. Dimensions and spacing are approximate.
+          Separate clearance checks use conservative bounding boxes along the
+          flown trajectory. An overlap fails the run. The parked vehicles stay
+          fixed. Tesla's physical barrel-roll demonstration is described in
+          <a
+            href="https://www.ft.com/content/a43a24b7-2127-400e-8b75-fe970931df51"
+            >the October 16 reveal report</a
+          >.
+        </p>
+        <p>
+          The analytical RK4 flight predictor and MuJoCo plant use separate
+          integration and contact code. The predictor includes wheel spin
+          angular momentum but omits tire contact forces. Its COM floor can
+          extend below tire height so MPC commands descent through contact;
+          points beyond contact are flight extrapolations. MuJoCo advances at
+          0.002 s and handles friction and compliant tire contact. Mass,
+          inertia, nozzle geometry and aerodynamic assumptions remain known, and
+          states are read without sensor noise. Separate integration alone does
+          not establish robustness to model error.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Browser implementation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Control</td>
+              <td>
+                Six nonnegative nozzle forces, each capped at 8.5 kN and tapered
+                below 12 kg of remaining gas.
+              </td>
+            </tr>
+            <tr>
+              <td>Bottom jets</td>
+              <td>Positions (±1.45, ±0.78, −0.32) m. Force in body +Z.</td>
+            </tr>
+            <tr>
+              <td>Side jets</td>
+              <td>
+                Positions (+2.00, ±0.80, −0.08) m. Force inward along body Y,
+                clear of the tires. Both are at the front, so lateral thrust
+                also produces yaw torque.
+              </td>
+            </tr>
+            <tr>
+              <td>Mass / exhaust</td>
+              <td>
+                1,428 kg dry, up to 250 kg gas, 650 m/s effective exhaust
+                velocity. Inertia scales with mass.
+              </td>
+            </tr>
+            <tr>
+              <td>Prediction</td>
+              <td>
+                Feedback: 10 steps × 0.12 s; replan every 0.12 s; up to 3 convex
+                iterations. Full-flight planning: a 0.12 s grid over the
+                initialized flight duration, up to 35 iterations.
+              </td>
+            </tr>
+            <tr>
+              <td>Plant</td>
+              <td>
+                MuJoCo WASM at 0.002 s: free chassis, four rotating wheels,
+                compliant tire contacts, segmented ramp and parked-vehicle
+                collision boxes.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          At the full initial mass of 1,678 kg, weight is 16.46 kN. Four level
+          bottom jets need 4.12 kN each to hover, or 6.21 kN each for the
+          reference takeoff acceleration of 5 m/s². Their 8.5 kN limit provides
+          34 kN total lift and up to 10.45 m/s² net upward acceleration while
+          level, before drag and attitude-control demands.
+        </p>
+        <p>
+          Each front side jet has a 2 m yaw moment arm. With yaw inertia 2,900
+          kg·m², a smooth 180° turn in two seconds needs about 6.58 kN peak side
+          thrust, using the quintic reference's peak angular acceleration. The
+          8.5 kN limit gives 17 kN·m maximum yaw torque. Opposing jets act
+          through their thrust difference. The complete simulation checks
+          coupled rotation and gas use; the ramp maneuver reaches nearly full
+          side thrust. Bottom thrust differences produce the barrel roll.
+        </p>
+        <p>
+          A least-squares attitude estimate initializes the first optimization.
+          Only optimized commands reach the physical simulation. With MPC off,
+          the car follows an uncontrolled ballistic path after leaving the ramp.
+          The browser controller has no PD fallback.
+        </p>
+        <p>
+          The car uses four bottom jets and two front side jets. Stored gas is
+          capped at 250 kg and fan suction at 2 g. Each jet is capped at 8.5 kN;
+          effective exhaust speed is 650 m/s. Gas use follows thrust divided by
+          effective exhaust speed. The total initial mass is 1,678 kg.
+          References:
+          <a href="https://www.youtube.com/live/qt5p-_tE8d0">Roadster reveal</a
+          >,
+          <a href="https://www.youtube.com/watch?v=22rvpUecLts"
+            >engineering interview</a
+          >
+          and
+          <a
+            href="https://www.caranddriver.com/news/a74165059/tesla-roadster-thrusters-fan-system-explained/"
+            >thruster and fan explanation</a
+          >.
+        </p>
+        <p>
+          Source:
+          <a href="./src/compute/car-mission.js"
+            >analytical flight predictor and MPC references</a
+          >;
+          <a href="./src/compute/car-planner.js">full-flight goal planner</a>;
+          <a href="./src/compute/car-mujoco.js"
+            >MuJoCo car plant and collision model</a
+          >;
+          <a
+            href="https://github.com/lzyang2000/SCvx-MPC/blob/main/src/rocket_landing/roadster_mpc.py"
+            >Python reference controller</a
+          >.
+        </p>
+      </section>
+      <section id="rocket">
+        <h2>Rocket: SCvx from liftoff through landing</h2>
+        <p>
+          Every run first builds a feasible initial guess in MuJoCo, then
+          optimizes a full mission using translational SCvx with mass, position,
+          velocity and world force. The objective uses the selected separation
+          altitude, the upright landing location and velocity, and fuel use.
+          Intermediate seed positions have zero tracking weight. The seed
+          supplies the discrete burn schedule and force-direction corridor.
+          Six-DoF MPC tracks the plan, including attitude, gimbal torque and
+          changing inertia. At boostback, entry, landing ignition and the
+          center-engine transition, the mission planner optimizes the remaining
+          flight again from the actual state. Below 300 m, MPC uses a terminal
+          braking reference from measured clearance and the landing goal. Burn
+          order and phase durations are scheduled; the planner does not optimize
+          discrete choices or guarantee a global optimum.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Actuators and reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Ascent</td>
+              <td>
+                Nine engines, up to 9 × 845,000 N. A height-based pitch profile
+                reaches 20° from vertical. The selectable separation altitude is
+                70–80 km, with 75 km as the default. Cutoff anticipates the
+                three-second coast to that altitude.
+              </td>
+            </tr>
+            <tr>
+              <td>Cutoff / separation</td>
+              <td>
+                Booster engines shut down three seconds before separation. The
+                upper engine waits eight more seconds and at least 5 m axial
+                clearance before ignition. Opposite impulses give 3 m/s relative
+                axial speed. MPC turns the booster with RCS while its engines
+                remain off. Boostback begins after at least 6 s, 30 m axial
+                clearance and attitude alignment.
+              </td>
+            </tr>
+            <tr>
+              <td>Coast</td>
+              <td>
+                Engines off. MPC commands bounded attitude RCS: 2 MN·m per
+                pitch/yaw axis and 17.5 kN·m in roll. The pitch/yaw authority is
+                an educational assumption.
+              </td>
+            </tr>
+            <tr>
+              <td>Boostback / entry / landing</td>
+              <td>
+                Three independent burns follow separation. Boostback uses three
+                engines until the predicted ballistic impact reaches the pad. A
+                twelve-second entry burn starts below 60 km on descent, followed
+                by at least three seconds of coasting. A numerical stopping
+                rollout accounts for propellant depletion and atmospheric drag
+                to schedule landing ignition and shape the braking reference.
+                Landing starts with three engines and reduces to one when
+                single-engine braking can reach the ground. The center engine
+                stays lit until contact. Every lit engine obeys the 57–100%
+                throttle bounds. Horizontal references bring position and
+                velocity toward the launch point over the estimated remaining
+                descent time. Below 80 m, a mass check selects direct landing
+                when minimum thrust prevents hovering. With sufficient mass, the
+                booster instead settles with its feet 2 m above the pad for one
+                second, then lowers at up to 0.7 m/s toward 0.2 m/s at contact.
+                Below 30 m, height tracks the lowest physical foot, including
+                tilt.
+              </td>
+            </tr>
+            <tr>
+              <td>Contact</td>
+              <td>
+                Engines cut at actual foot contact. MuJoCo settles the booster
+                for 12 seconds on a 20 m radius pad centered on the launch
+                point.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Body thrust obeys <code>‖Fxy‖ ≤ tan(6°) Fz</code>,
+          <code>Fz ≥ Tmin</code> and <code>‖F‖ ≤ Tmax</code>. These are
+          second-order cone constraints. Gimbal force at the engine moment arm
+          produces pitch and yaw torque. A separate bounded RCS input supplies
+          roll torque; powered pitch/yaw RCS is zero.
+        </p>
+        <p>
+          Three-engine landing uses thirty-two prediction steps of at most 0.06
+          s. One-engine landing uses sixteen steps of at most 0.25 s during
+          braking and hover, then 0.12 s during final descent. Steps shrink as
+          low as 0.002 s near contact or propellant exhaustion. Coast uses
+          sixteen 0.15 s steps, entry uses ten 0.12 s steps, and ascent and
+          boostback use ten 0.4 s steps. MuJoCo advances at 0.005 s.
+          Three-engine landing replans every 0.1 s; otherwise the interval is
+          0.4 s, shortening to 0.2 s below 300 m, 0.04 s below 30 m and 0.01 s
+          below 5 m. Mass, tank centers and principal inertia change as
+          propellant burns.
+        </p>
+        <p>
+          The nominal demonstration separates at 75 km with a full initial
+          first-stage tank of 407,500 kg. Fuel is integrated from commanded
+          thrust and effective specific impulse. Separation speed, remaining
+          fuel and touchdown conditions are outputs of the simulation; residual
+          fuel is not prescribed. The default flight lands directly because its
+          final mass cannot balance minimum engine thrust.
+        </p>
+        <p>
+          Each engine is bounded to 57–100% throttle with a maximum of 845 kN,
+          held constant throughout flight. Dry mass is 25.6 tonnes, tank
+          capacity is 407,500 kg and effective specific impulse is 282 s. The
+          model includes exponential atmospheric drag and omits
+          altitude-dependent thrust. References:
+          <a
+            href="https://www.spacex.com/assets/media/falcon-users-guide-2025-05-09.pdf"
+            >engine data</a
+          >
+          and
+          <a href="https://www.spacex.com/launches/twilight"
+            >RTLS burn sequence</a
+          >.
+        </p>
+        <p>
+          The second stage inherits the separation pose and angular velocity.
+          Both bodies receive opposite axial impulses that conserve momentum.
+          Its engine ignites eight seconds after separation once axial clearance
+          exceeds 5 m, then follows a prescribed axial 981 kN burn outside the
+          booster MPC.
+        </p>
+        <p>
+          Nozzle and flame directions ease over 0.18 s for display. Physics
+          applies MPC commands immediately. An exponential atmosphere uses
+          sea-level density 1.225 kg/m³, scale height 8.5 km and drag
+          coefficient 0.8 with an attitude-dependent projected area. Drag acts
+          at the center of mass in both the predictor and MuJoCo plant. Wind,
+          lift, aerodynamic moments, actuator lag, Earth curvature, slosh and
+          structural limits are omitted. The native controller has separate
+          guidance and PD modes; browser flights use SCvx.
+        </p>
+        <p>
+          Calibration references:
+          <a
+            href="https://www.emi.fraunhofer.de/en/news/news-press/fraunhofer-satellite-ernst-monitors-launching-rockets.html"
+            >Fraunhofer separation observation</a
+          >
+          (about 70 km and 6,000 km/h),
+          <a
+            href="https://www.nasa.gov/wp-content/uploads/2018/07/spacex_nasa_crs-7_presskit.pdf"
+            >CRS-7 planned ascent</a
+          >
+          (80 km at cutoff), and the Falcon user guide's sample staging
+          timeline. Missions have different ascent profiles; these references
+          set an approximate range.
+        </p>
+        <p>
+          The mission planner uses seven translational states and three
+          world-force inputs. It integrates thrust, propellant depletion,
+          gravity and exponential drag. The seed attitude approximates projected
+          area; full rotational dynamics are left to the tracking MPC. The green
+          path shows the current mission plan, blue shows the local MPC
+          prediction, and silver shows the actual path. Replays retain each plan
+          revision.
+        </p>
+        <p>
+          Source:
+          <a href="./src/compute/rocket-planner.js"
+            >rocket mission goal planner</a
+          >,
+          <a href="./src/compute/rocket-mission.js"
+            >mission phases and references</a
+          >,
+          <a href="./src/compute/rocket-dynamics.js"
+            >prediction and mass properties</a
+          >, <a href="./assets/rocket.xml">MuJoCo plant</a>,
+          <a href="./src/rocket-model.js">Three.js model</a>.
+        </p>
+      </section>
+      <section id="browser">
+        <h2>Live computation on GitHub Pages</h2>
+        <p>
+          GitHub Pages serves the files, and your browser runs both simulations.
+          A module worker loads Clarabel WASM and the official single-thread
+          MuJoCo WASM package for either vehicle. Three.js renders on the main
+          thread. The site needs no Python API, shared memory, server-side
+          solver or special cross-origin headers.
+        </p>
+        <p>
+          Run live integrates new states and solves new plans. Compute mission
+          runs the same code as fast as the worker permits and records the
+          result. The included recordings let the page open immediately. Their
+          labels distinguish replay from live computation. Stop terminates the
+          worker, including an in-progress solve. Switching vehicle tabs stops
+          the inactive simulation.
+        </p>
+        <p>
+          Relative URLs let the site run in a repository subdirectory on Pages.
+          Runtime packages ship with the site. If a device cannot keep up with
+          the selected pace, the simulation slows down. The display uses the
+          states it has received and reports the measured solve latency.
+        </p>
+      </section>
+      <section id="papers">
+        <h2>Papers and source</h2>
+        <ul>
+          <li>
+            Mao, Szmuk and Açıkmeşe (2016),
+            <a href="https://arxiv.org/abs/1608.05133"
+              >Successive Convexification of Non-Convex Optimal Control Problems
+              and Its Convergence Properties</a
+            >. The foundational SCvx method.
+          </li>
+          <li>
+            Szmuk, Reynolds and Açıkmeşe (2020),
+            <a href="https://doi.org/10.2514/1.G004549"
+              >Successive Convexification for Real-Time Six-Degree-of-Freedom
+              Powered Descent Guidance with State-Triggered Constraints</a
+            >. The main powered-descent reference used by this repository.
+          </li>
+          <li>
+            Szmuk and Açıkmeşe (2018),
+            <a href="https://doi.org/10.2514/6.2018-0617"
+              >Successive Convexification for 6-DoF Mars Rocket Powered Landing
+              with Free-Final-Time</a
+            >.
+          </li>
+        </ul>
+        <p>
+          <a href="https://github.com/lzyang2000/SCvx-MPC"
+            >Project source on GitHub</a
+          >
+          · <a href="https://github.com/google-deepmind/mujoco">MuJoCo</a> ·
+          <a href="https://clarabel.org/">Clarabel</a> ·
+          <a href="./src/compute/vendor/clarabel/NOTICE.txt"
+            >Clarabel WASM provenance and license</a
+          >
+        </p>
+      </section>
+      <footer>
+        <a href="./#car">Open car demo</a> ·
+        <a href="./#rocket">Open rocket demo</a>
+      </footer>
+    </main>
+    <script type="module">
+      import { initializeLanguage } from "./src/i18n.js";
+      initializeLanguage();
+    </script>
+  </body>
+</html>

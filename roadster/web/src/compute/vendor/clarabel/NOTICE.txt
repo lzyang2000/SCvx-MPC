@@ -1,0 +1,4 @@
+Clarabel WASM bindings distributed by cvxjs 0.1.4 (Apache-2.0).
+Source: https://github.com/SteveDiamond/cvxjs/tree/main/wasm
+Clarabel: https://github.com/oxfordcontrol/Clarabel.rs (Apache-2.0).
+Copied from the npm cvxjs@0.1.4 package, wasm/pkg/web; no modifications.

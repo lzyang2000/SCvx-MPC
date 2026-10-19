@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#05070a" />
+    <title>SCvx MPC Demos</title>
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="stylesheet" href="./src/shell.css" />
+    <link rel="stylesheet" href="./src/language.css" />
+  </head>
+  <body>
+    <nav class="demo-nav" aria-label="SCvx MPC demos">
+      <a class="site-name" href="./" aria-label="SCvx MPC Demos home"
+        ><img
+          class="site-mark"
+          src="./assets/scvx-mark.svg"
+          alt=""
+          width="30"
+          height="30"
+        /><span class="site-title">SCvx MPC Demos</span></a
+      >
+      <div role="tablist" aria-label="Vehicle">
+        <button
+          id="tab-car"
+          role="tab"
+          aria-selected="true"
+          aria-controls="demo-car"
+          data-demo="car"
+        >
+          01 <span>Car</span></button
+        ><button
+          id="tab-rocket"
+          role="tab"
+          aria-selected="false"
+          aria-controls="demo-rocket"
+          data-demo="rocket"
+          tabindex="-1"
+        >
+          02 <span>Rocket</span>
+        </button>
+      </div>
+      <a class="method-link" href="./formulation.html"
+        >Formulation & papers ↗</a
+      >
+    </nav>
+    <iframe
+      id="demo-car"
+      role="tabpanel"
+      aria-labelledby="tab-car"
+      title="Roadster SCvx simulation"
+      src="./car.html"
+    ></iframe
+    ><iframe
+      id="demo-rocket"
+      role="tabpanel"
+      aria-labelledby="tab-rocket"
+      title="Rocket SCvx simulation"
+      data-src="./rocket.html"
+      hidden
+    ></iframe>
+    <script type="module" src="./src/shell.js"></script>
+  </body>
+</html>

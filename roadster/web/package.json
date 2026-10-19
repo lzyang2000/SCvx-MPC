@@ -1,0 +1,14 @@
+{
+  "name": "scvx-mpc-demos",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@mujoco/mujoco": "3.16.0",
+    "three": "0.180.0"
+  }
+}

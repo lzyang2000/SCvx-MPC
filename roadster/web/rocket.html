@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#05070a" />
+    <title>Rocket · SCvx MPC Demos</title>
+    <link rel="icon" href="./favicon.svg" />
+    <script src="./src/demo-layout.js"></script>
+    <link rel="stylesheet" href="./src/style.css" />
+    <link rel="stylesheet" href="./src/rocket.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three/three.module.js",
+          "three/addons/": "./vendor/three/addons/"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="./src/language.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="./" target="_top"
+        ><img
+          class="mark"
+          src="./assets/scvx-mark.svg"
+          alt=""
+          width="32"
+          height="32"
+        />
+        SCvx MPC DEMOS<span class="divider"></span
+        ><span class="brand-sub">ROCKET</span></a
+      ><a class="text-button" href="./formulation.html" target="_top"
+        >Formulation & papers ↗</a
+      >
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <div class="eyebrow">FALCON 9 CONCEPT · MUJOCO WASM</div>
+          <h1>Rocket launch and booster landing</h1>
+          <p>
+            SCvx controls the booster from liftoff to landing. Follow its
+            predicted path as it replans during flight.
+          </p>
+        </div>
+        <div class="heading-note">
+          THREE.JS / CLARABEL WASM<br /><span
+            >Atmospheric flight · Simplified model</span
+          >
+        </div>
+      </div>
+      <div class="workspace">
+        <aside class="setup-panel">
+          <div class="panel-title">
+            <span>01 / MISSION SETUP</span><span class="tag">SI UNITS</span>
+          </div>
+          <div class="car-spec">
+            <span class="car-icon">↟</span>
+            <div>
+              <h2>Two-stage rocket</h2>
+              <p>Original 3D model</p>
+            </div>
+          </div>
+          <div class="setup-group">
+            <label for="separation-altitude"
+              >Separation altitude
+              <output id="separation-altitude-out">75 km</output></label
+            ><input
+              type="range"
+              id="separation-altitude"
+              min="70"
+              max="80"
+              step="5"
+              value="75"
+            />
+            <div class="range-ends"><span>70 KM</span><span>80 KM</span></div>
+            <p class="rocket-note">
+              The stages separate at this altitude, three seconds after main
+              engine cutoff.
+            </p>
+            <label for="live-speed">Live simulation pace</label
+            ><select id="live-speed">
+              <option value="1">1× real time</option>
+              <option value="5">5× real time</option>
+              <option value="7" selected>7× real time</option>
+              <option value="10">10× real time</option>
+              <option value="25">25× real time</option>
+            </select>
+          </div>
+          <div class="setup-group propulsion">
+            <h3>Booster actuators</h3>
+            <div><span>Ascent</span><b>9 engines</b></div>
+            <div><span>Separation / turn</span><b>Engines off · RCS</b></div>
+            <div><span>Return burn</span><b>3 engines</b></div>
+            <div><span>Landing</span><b>1 engine</b></div>
+            <div><span>Gimbal</span><b>±6° cone</b></div>
+            <div><span>Coast</span><b>Bounded RCS</b></div>
+          </div>
+          <button id="live" class="primary-button live-button">
+            Run live <span>●</span></button
+          ><button id="compute" class="primary-button">
+            Compute mission <span>↗</span>
+          </button>
+          <div id="compute-status" class="compute-status" role="status">
+            Loading recorded mission…
+          </div>
+          <p class="rocket-note">
+            Your browser computes physics and control plans in the background. A
+            slow solve can delay the simulation while the display stays
+            responsive.
+          </p>
+        </aside>
+        <section class="viewport" aria-label="Three.js rocket mission">
+          <div id="scene"></div>
+          <div class="scene-top">
+            <div class="scene-label">
+              <span class="live-dot"></span><span id="phase">ASCENT</span
+              ><span class="scene-sub" id="owner">SCvx MPC</span>
+            </div>
+            <span id="transport">RECORDED / WASM</span>
+          </div>
+          <div class="view-switch" aria-label="Camera">
+            <button data-view="follow" class="selected">Follow rocket</button
+            ><button data-view="upper">Upper stage</button
+            ><button data-view="overview">Mission path</button
+            ><button data-view="pad">Landing pad</button>
+          </div>
+          <div class="scene-bottom">
+            <span>Z UP / EARTH 9.81 M/S²</span
+            ><span>DRAG TO ORBIT · SCROLL TO ZOOM</span>
+          </div>
+          <div class="view-options">
+            <label
+              ><input id="trail" type="checkbox" checked /> Flight path</label
+            ><label
+              ><input id="prediction" type="checkbox" checked /> MPC plan</label
+            ><label
+              ><input id="mission-plan" type="checkbox" checked /> Mission
+              plan</label
+            ><label><input id="jets" type="checkbox" checked /> Plumes</label>
+          </div>
+          <div id="outcome" class="outcome" hidden></div>
+        </section>
+        <aside class="telemetry-panel">
+          <div class="panel-title">
+            <span>02 / TELEMETRY</span><span class="live-dot"></span>
+          </div>
+          <div class="metric primary-metric">
+            <span>BOOSTER ALTITUDE</span>
+            <div><b id="altitude">0.02</b><small>km</small></div>
+          </div>
+          <div class="metric">
+            <span>VERTICAL VELOCITY</span>
+            <div><b id="vz">0.0</b><small>m/s</small></div>
+          </div>
+          <div class="metric">
+            <span>HORIZONTAL SPEED</span>
+            <div><b id="vx">0.0</b><small>m/s</small></div>
+          </div>
+          <div class="metric">
+            <span>PROPELLANT</span>
+            <div><b id="fuel">407500</b><small>kg</small></div>
+            <div class="gas-bar"><i id="fuel-fill"></i></div>
+          </div>
+          <div class="metric">
+            <span>THRUST / ENGINES</span>
+            <div><b id="thrust">0.0</b><small id="engines">MN / 9</small></div>
+          </div>
+          <div class="metric">
+            <span>PAD DISTANCE</span>
+            <div><b id="pad-error">0</b><small>m</small></div>
+          </div>
+          <button id="export" class="text-button">
+            Export states & plans ↓
+          </button>
+        </aside>
+      </div>
+      <section class="playback">
+        <button id="play" class="play-button" aria-label="Play mission">
+          ▶</button
+        ><button
+          id="restart"
+          class="restart-button"
+          aria-label="Restart mission"
+        >
+          ↺
+        </button>
+        <div class="time-readout">
+          <b id="time">0.0</b><span id="duration">/ 0 s</span>
+        </div>
+        <div class="timeline-wrap">
+          <input
+            id="timeline"
+            type="range"
+            min="0"
+            max="700"
+            value="0"
+            step=".05"
+            aria-label="Mission time"
+          />
+          <div id="phase-ticks" class="phase-ticks"></div>
+        </div>
+        <select id="rate" aria-label="Playback speed">
+          <option value="1">1×</option>
+          <option value="5">5×</option>
+          <option value="7" selected>7× speed</option>
+          <option value="10">10×</option>
+          <option value="25">25×</option>
+          <option value="50">50×</option>
+        </select>
+      </section>
+      <section class="sound-controls" aria-label="Sound settings">
+        <button id="sound-toggle" type="button" aria-pressed="true">
+          Sound on
+        </button>
+        <label><input id="sound-music" type="checkbox" checked /> Music</label>
+        <label for="sound-volume">Volume</label>
+        <input
+          id="sound-volume"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.3"
+          aria-label="Sound volume"
+        />
+      </section>
+      <section
+        class="mpc-inspector rocket-inspector"
+        aria-label="MPC inspector"
+      >
+        <div class="mpc-inspector-status">
+          <div class="panel-title">
+            <span>03 / MPC INSPECTOR</span
+            ><span id="transport-badge" class="transport-badge"
+              >REPLAY / WASM</span
+            >
+          </div>
+          <div class="mpc-title">
+            <span id="mpc-dot" class="live-dot"></span>
+            <h2 id="mpc-state">Waiting for first plan</h2>
+          </div>
+          <p id="mpc-explanation">
+            MPC controls booster thrust, gimbal and RCS from liftoff to landing.
+          </p>
+          <div class="mpc-actions">
+            <button id="inspect-mpc" class="outline-button">
+              Inspect MPC ↗</button
+            ><button id="next-solve" class="outline-button">
+              Next solve →
+            </button>
+          </div>
+        </div>
+        <div class="mpc-plot">
+          <div class="panel-title">
+            <span>MPC PATH / SIDE VIEW</span><span>METERS</span>
+          </div>
+          <svg
+            id="mpc-chart"
+            viewBox="0 0 320 140"
+            role="img"
+            aria-label="MPC predicted versus actual path; horizontal X position and vertical Z center of mass height in meters, axes scale independently"
+          >
+            <path d="M48 18V108H302" fill="none" stroke="#2a3442" />
+            <g class="plot-axis-labels">
+              <text x="8" y="14">Z (m)</text>
+              <text x="175" y="137" text-anchor="middle">X position (m)</text>
+              <text id="mpc-x-min" x="48" y="122" text-anchor="middle">—</text>
+              <text id="mpc-x-mid" x="175" y="122" text-anchor="middle">—</text>
+              <text id="mpc-x-max" x="302" y="122" text-anchor="end">—</text>
+              <text id="mpc-z-min" x="43" y="110" text-anchor="end">—</text>
+              <text id="mpc-z-max" x="43" y="22" text-anchor="end">—</text>
+            </g>
+            <path
+              id="mpc-plot-predicted"
+              fill="none"
+              stroke="#4da3ff"
+              stroke-width="2"
+              stroke-dasharray="5 3"
+            />
+            <path
+              id="mpc-plot-actual"
+              fill="none"
+              stroke="#d4dce7"
+              stroke-width="2"
+            />
+            <circle
+              id="mpc-plot-now"
+              r="3.5"
+              fill="#d4dce7"
+              visibility="hidden"
+            />
+          </svg>
+          <div class="mpc-legend">
+            <span class="planned">● Predicted path</span
+            ><span class="delivered">● Actual path</span
+            ><span class="rejected">● Rejected candidate</span>
+          </div>
+          <p class="mpc-plot-note">
+            The dot marks the latest recorded center of mass. Each axis scales
+            independently.
+          </p>
+        </div>
+        <div class="mpc-diagnostics">
+          <dl>
+            <div>
+              <dt>SOLVE</dt>
+              <dd id="mpc-solve">—</dd>
+            </div>
+            <div>
+              <dt>HORIZON</dt>
+              <dd id="mpc-horizon">—</dd>
+            </div>
+            <div>
+              <dt>LATENCY</dt>
+              <dd id="mpc-latency">—</dd>
+            </div>
+            <div>
+              <dt>PLAN AGE</dt>
+              <dd id="mpc-age">—</dd>
+            </div>
+            <div>
+              <dt>REQUEST / APPLIED</dt>
+              <dd id="mpc-force">—</dd>
+            </div>
+            <div>
+              <dt>SCALED DEFECT</dt>
+              <dd id="mpc-defect">—</dd>
+            </div>
+          </dl>
+          <p id="mpc-solver-status">Booster flight predictions</p>
+        </div>
+      </section>
+      <div
+        id="phase-jumps"
+        class="mpc-actions phase-jumps"
+        aria-label="Mission phases"
+      ></div>
+      <footer>
+        <span>MUJOCO PHYSICS · CLARABEL OPTIMIZER · THREE.JS</span>
+        <div>
+          <a href="./formulation.html#rocket" target="_top"
+            >Rocket implementation ↗</a
+          ><button id="about" class="text-button">Model notes</button>
+        </div>
+      </footer>
+    </main>
+    <dialog id="notes">
+      <button id="close-notes" class="close-button" aria-label="Close notes">
+        ×
+      </button>
+      <div class="eyebrow">ROCKET MODEL</div>
+      <h2>What controls the flight</h2>
+      <p>
+        SCvx chooses thrust and reaction-control system (RCS) torque throughout
+        ascent, coasting and powered descent. RCS torque stays within the
+        model's limits. MuJoCo applies the first command from each accepted
+        plan. A rejected plan stops the run. MPC remains in control through
+        landing, with no handoff to PD control.
+      </p>
+      <p>
+        The booster engines shut down before separation. Once the stages are
+        clear, the upper stage ignites. The booster makes three separate burns:
+        boostback, entry and landing, with engines off between them. MPC guides
+        it back to the launch pad and slows for touchdown. It briefly hovers
+        before lowering onto the pad when the remaining mass allows; lighter
+        boosters land directly.
+      </p>
+      <p>
+        Each run plans a new mission from the selected separation altitude and
+        landing goal. Translational SCvx optimizes the full path, velocity, mass
+        and thrust from a feasible initial guess. Six-DoF MPC tracks it in
+        MuJoCo. At return-burn transitions, the planner recomputes the remaining
+        flight from the actual state. Near the pad, MPC uses measured foot
+        clearance to brake and land upright. Engine counts and burn order remain
+        scheduled. The upper stage follows its own prescribed burn.
+      </p>
+      <p>
+        MuJoCo simulates rigid-body motion and foot contact with changing mass,
+        center of mass and inertia. Thrust and RCS commands act instantly. An
+        exponential atmosphere adds drag at the center of mass. The model omits
+        wind, lift, aerodynamic moments, Earth curvature, actuator lag, slosh
+        and structural loads. During coast, RCS torque limits are 2 MN·m per
+        pitch/yaw axis and 17.5 kN·m in roll.
+      </p>
+      <p>
+        <a href="./formulation.html#rocket" target="_top"
+          >Read the equations, assumptions and papers ↗</a
+        >
+      </p>
+    </dialog>
+    <script type="module" src="./src/rocket.js"></script>
+  </body>
+</html>

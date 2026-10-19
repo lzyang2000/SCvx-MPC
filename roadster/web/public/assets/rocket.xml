@@ -1,0 +1,154 @@
+<mujoco model="Falcon 9 proportioned powered descent rocket">
+  <compiler angle="degree" autolimits="true"/>
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast" solver="Newton"/>
+
+  <visual>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.75 0.75 0.75" specular="0.25 0.25 0.25"/>
+    <rgba haze="0.08 0.12 0.18 1"/>
+    <global azimuth="135" elevation="-14"/>
+  </visual>
+
+  <statistic center="0 0 20" extent="95"/>
+
+  <default>
+    <geom friction="0.9 0.04 0.01" condim="4" solref="0.025 1" solimp="0.90 0.95 0.003"/>
+  </default>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.025 0.04 0.08" rgb2="0.18 0.25 0.34" width="512" height="3072"/>
+    <texture name="ground_tex" type="2d" builtin="checker" rgb1="0.16 0.18 0.20" rgb2="0.10 0.11 0.12" width="512" height="512" mark="edge" markrgb="0.25 0.27 0.30"/>
+    <material name="ground_mat" texture="ground_tex" texrepeat="300 300" reflectance="0.12"/>
+    <material name="white" rgba="0.84 0.85 0.84 1" metallic="0.35" roughness="0.42"/>
+    <material name="soot" rgba="0.16 0.17 0.17 1" metallic="0.45" roughness="0.40"/>
+    <material name="carbon" rgba="0.055 0.06 0.065 1" metallic="0.65" roughness="0.27"/>
+    <material name="leg" rgba="0.72 0.73 0.71 1" metallic="0.72" roughness="0.28"/>
+    <material name="engine" rgba="0.20 0.21 0.21 1" metallic="0.88" roughness="0.22"/>
+    <material name="pad" rgba="0.18 0.20 0.22 1" metallic="0.4" roughness="0.5"/>
+    <material name="launch_pad" rgba="0.12 0.14 0.16 1" metallic="0.35" roughness="0.58"/>
+    <material name="tower_steel" rgba="0.31 0.34 0.37 1" metallic="0.72" roughness="0.36"/>
+    <material name="tower_arm" rgba="0.58 0.40 0.22 1" metallic="0.52" roughness="0.42"/>
+  </asset>
+
+  <worldbody>
+    <light pos="-45 -35 85" dir="0.5 0.4 -1" directional="true" diffuse="0.9 0.86 0.78" castshadow="true"/>
+    <light pos="55 30 55" dir="-0.8 -0.4 -1" directional="true" diffuse="0.26 0.34 0.5"/>
+
+    <geom name="ground" type="plane" size="50000 50000 0.1" material="ground_mat"/>
+    <geom name="landing_pad" type="cylinder" pos="0 0 0.08" size="20 0.08" material="pad"/>
+    <geom name="target_outer" type="cylinder" pos="0 0 0.172" size="19 0.01" rgba="1.0 0.78 0.08 1" contype="0" conaffinity="0"/>
+    <geom name="target_inner" type="cylinder" pos="0 0 0.184" size="18.4 0.012" rgba="0.14 0.16 0.18 1" contype="0" conaffinity="0"/>
+    <!-- Invisible launch support; disabled permanently once flight begins. -->
+    <geom name="launch_mount" type="cylinder" pos="0 0 0.61" size="1.50 0.61" rgba="0 0 0 0"/>
+
+    <!-- Visual-only launch tower on world -X, left of the rocket. -->
+    <body name="launch_tower" pos="-11 0 0">
+      <geom name="launch_tower_base" type="box" pos="0 0 0.35" size="2.4 2.4 0.35" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_column_xm_ym" type="box" pos="-1.4 -1.4 36" size="0.24 0.24 36" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_column_xm_yp" type="box" pos="-1.4 1.4 36" size="0.24 0.24 36" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_column_xp_ym" type="box" pos="1.4 -1.4 36" size="0.24 0.24 36" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_column_xp_yp" type="box" pos="1.4 1.4 36" size="0.24 0.24 36" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_06" type="box" pos="0 0 6" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_18" type="box" pos="0 0 18" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_30" type="box" pos="0 0 30" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_42" type="box" pos="0 0 42" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_54" type="box" pos="0 0 54" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_platform_66" type="box" pos="0 0 66" size="1.75 1.75 0.14" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_low_a" type="capsule" fromto="1.4 -1.4 6 1.4 1.4 18" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_low_b" type="capsule" fromto="1.4 1.4 6 1.4 -1.4 18" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_mid_a" type="capsule" fromto="1.4 -1.4 30 1.4 1.4 42" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_mid_b" type="capsule" fromto="1.4 1.4 30 1.4 -1.4 42" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_high_a" type="capsule" fromto="1.4 -1.4 54 1.4 1.4 66" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_brace_high_b" type="capsule" fromto="1.4 1.4 54 1.4 -1.4 66" size="0.12" material="tower_steel" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_service_arm_low" type="box" pos="5.0 0 21" size="3.6 0.32 0.24" material="tower_arm" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_service_arm_mid" type="box" pos="5.0 0 43" size="3.6 0.32 0.24" material="tower_arm" contype="0" conaffinity="0"/>
+      <geom name="launch_tower_service_arm_high" type="box" pos="5.0 0 61" size="3.6 0.32 0.24" material="tower_arm" contype="0" conaffinity="0"/>
+    </body>
+
+    <!--
+      Body coordinates approximate a Falcon 9 first stage: 41.2 m overall
+      height, 3.66 m tank diameter, and roughly 18 m deployed leg span.
+      Mass and thrust are educational landing-condition approximations.
+    -->
+    <body name="rocket" simple="false" pos="0 0 20.76">
+      <freejoint name="rocket_freejoint"/>
+      <inertial pos="0 0 0" mass="30000" diaginertia="4300000 4300000 60000"/>
+
+      <!-- 3.66 m diameter propellant tank and upper interstage. -->
+      <geom name="fuselage" type="cylinder" pos="0 0 -0.50" size="1.83 16.90" material="white"/>
+      <geom name="upper_raceway" type="box" pos="0 -1.835 -0.2" size="0.10 0.055 15.6" material="soot" contype="0" conaffinity="0"/>
+      <geom name="interstage" type="cylinder" pos="0 0 18.42" size="1.83 2.02" material="carbon"/>
+      <geom name="interstage_lip" type="cylinder" pos="0 0 20.31" size="1.91 0.13" material="soot" contype="0" conaffinity="0"/>
+
+      <!-- Full-stack ascent visuals. Python hides these in the landing lab and
+           jettisons them when the autonomous launch-return mission separates. -->
+      <geom name="upper_stage" type="cylinder" pos="0 0 27.15" size="1.83 6.70" material="white" contype="0" conaffinity="0"/>
+      <geom name="upper_stage_skirt" type="cylinder" pos="0 0 20.72" size="1.86 0.30" material="soot" contype="0" conaffinity="0"/>
+      <geom name="payload_fairing_lower" type="cylinder" pos="0 0 37.45" size="2.60 3.60" material="white" contype="0" conaffinity="0"/>
+      <geom name="payload_fairing_upper" type="ellipsoid" pos="0 0 41.05" size="2.60 2.60 6.70" material="white" contype="0" conaffinity="0"/>
+
+      <!-- Sooted engine section and octaweb. -->
+      <geom name="lower_skirt" type="cylinder" pos="0 0 -18.15" size="1.90 0.75" material="soot"/>
+      <geom name="octaweb" type="cylinder" pos="0 0 -19.22" size="1.66 0.32" material="carbon"/>
+
+      <!-- Four horizontally deployed grid fins near the top of the first stage. -->
+      <geom name="grid_fin_xp" type="box" pos="2.42 0 15.25" size="0.66 0.72 0.075" material="carbon" contype="0" conaffinity="0"/>
+      <geom name="grid_fin_xm" type="box" pos="-2.42 0 15.25" size="0.66 0.72 0.075" material="carbon" contype="0" conaffinity="0"/>
+      <geom name="grid_fin_yp" type="box" pos="0 2.42 15.25" size="0.72 0.66 0.075" material="carbon" contype="0" conaffinity="0"/>
+      <geom name="grid_fin_ym" type="box" pos="0 -2.42 15.25" size="0.72 0.66 0.075" material="carbon" contype="0" conaffinity="0"/>
+
+      <!-- Canonical deployed leg geometry; Python animates it from stowed poses. -->
+      <geom name="leg_xp" type="capsule" fromto="1.63 0 -13.10 8.50 0 -20.38" size="0.16" material="leg"/>
+      <geom name="leg_xm" type="capsule" fromto="-1.63 0 -13.10 -8.50 0 -20.38" size="0.16" material="leg"/>
+      <geom name="leg_yp" type="capsule" fromto="0 1.63 -13.10 0 8.50 -20.38" size="0.16" material="leg"/>
+      <geom name="leg_ym" type="capsule" fromto="0 -1.63 -13.10 0 -8.50 -20.38" size="0.16" material="leg"/>
+
+      <geom name="strut_xp" type="capsule" fromto="1.72 0 -17.15 8.50 0 -20.38" size="0.095" material="soot"/>
+      <geom name="strut_xm" type="capsule" fromto="-1.72 0 -17.15 -8.50 0 -20.38" size="0.095" material="soot"/>
+      <geom name="strut_yp" type="capsule" fromto="0 1.72 -17.15 0 8.50 -20.38" size="0.095" material="soot"/>
+      <geom name="strut_ym" type="capsule" fromto="0 -1.72 -17.15 0 -8.50 -20.38" size="0.095" material="soot"/>
+
+      <geom name="foot_xp" type="ellipsoid" pos="8.50 0 -20.38" size="0.72 0.38 0.22" material="leg"/>
+      <geom name="foot_xm" type="ellipsoid" pos="-8.50 0 -20.38" size="0.72 0.38 0.22" material="leg"/>
+      <geom name="foot_yp" type="ellipsoid" pos="0 8.50 -20.38" size="0.38 0.72 0.22" material="leg"/>
+      <geom name="foot_ym" type="ellipsoid" pos="0 -8.50 -20.38" size="0.38 0.72 0.22" material="leg"/>
+
+      <!-- Nine Merlin-like engine bells in a 1+8 arrangement. -->
+      <geom name="engine_center" type="cylinder" pos="0 0 -19.82" size="0.42 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_1" type="cylinder" pos="1.06 0 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_2" type="cylinder" pos="0.75 0.75 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_3" type="cylinder" pos="0 1.06 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_4" type="cylinder" pos="-0.75 0.75 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_5" type="cylinder" pos="-1.06 0 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_6" type="cylinder" pos="-0.75 -0.75 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_7" type="cylinder" pos="0 -1.06 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+      <geom name="engine_8" type="cylinder" pos="0.75 -0.75 -19.82" size="0.34 0.27" material="engine" contype="0" conaffinity="0"/>
+
+      <geom name="engine_flame" type="cylinder" pos="0 0 -20.60" size="0.30 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_1" type="cylinder" pos="1.06 0 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_2" type="cylinder" pos="0.75 0.75 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_3" type="cylinder" pos="0 1.06 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_4" type="cylinder" pos="-0.75 0.75 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_5" type="cylinder" pos="-1.06 0 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_6" type="cylinder" pos="-0.75 -0.75 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_7" type="cylinder" pos="0 -1.06 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <geom name="engine_flame_8" type="cylinder" pos="0.75 -0.75 -20.60" size="0.25 0.50" rgba="1 0.28 0.03 0" contype="0" conaffinity="0" group="3"/>
+      <site name="thrust_origin" pos="0 0 -20.10" size="0.11" rgba="1 0.55 0.1 1"/>
+      <!-- Opposed tangential RCS sites form a zero-net-force roll couple. -->
+      <site name="roll_rcs_xp" pos="1.75 0 15.25" size="0.09" rgba="0.15 0.75 1 0.8"/>
+      <site name="roll_rcs_xm" pos="-1.75 0 15.25" size="0.09" rgba="0.15 0.75 1 0.8"/>
+    </body>
+
+    <!-- Hidden free-flight copy activated at stage separation. Its body frame
+         matches the first-stage body frame so the visuals transfer without a
+         pose discontinuity. It coasts ballistically after a small push. -->
+    <body name="separated_upper_stage" simple="false" pos="0 0 -1000">
+      <freejoint name="upper_stage_freejoint"/>
+      <inertial pos="0 0 34.0" mass="111500" diaginertia="7767663 7767663 192010"/>
+      <geom name="separated_upper_stage_tank" type="cylinder" pos="0 0 27.15" size="1.83 6.70" material="white" rgba="0.84 0.85 0.84 0" contype="0" conaffinity="0"/>
+      <geom name="separated_upper_stage_skirt" type="cylinder" pos="0 0 20.72" size="1.86 0.30" material="soot" rgba="0.16 0.17 0.17 0" contype="0" conaffinity="0"/>
+      <geom name="separated_payload_fairing_lower" type="cylinder" pos="0 0 37.45" size="2.60 3.60" material="white" rgba="0.84 0.85 0.84 0" contype="0" conaffinity="0"/>
+      <geom name="separated_payload_fairing_upper" type="ellipsoid" pos="0 0 41.05" size="2.60 2.60 6.70" material="white" rgba="0.84 0.85 0.84 0" contype="0" conaffinity="0"/>
+      <geom name="separated_upper_stage_flame" type="cylinder" pos="0 0 19.85" size="0.34 0.70" rgba="0.25 0.55 1 0" contype="0" conaffinity="0" group="3"/>
+    </body>
+  </worldbody>
+</mujoco>
